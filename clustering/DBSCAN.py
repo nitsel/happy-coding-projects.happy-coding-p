@@ -1,10 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-===================================
-Demo of DBSCAN clustering algorithm
-===================================
-
-Finds core samples of high density and expands clusters from them.
+Modified from scikit-learn module
 
 """
 import numpy as np
