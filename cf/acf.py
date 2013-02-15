@@ -4,6 +4,7 @@ Created on Feb 15, 2013
 @author: guoguibing
 '''
 import sims
+import math
 import numpy as py
 from scipy.spatial import distance
 from sklearn.cluster import DBSCAN
@@ -23,7 +24,7 @@ class AbstractCF(object):
         self.load_config()
     
     def load_config(self):
-        with open('cf.properties', 'r') as f:
+        with open('cf.conf', 'r') as f:
             for line in f:
                 if line.find('=') == -1:
                     continue
@@ -71,9 +72,11 @@ class AbstractCF(object):
     
     def print_performance(self):
         MAE = py.mean(self.errors)
-        print 'MAE = {0:.4f}'.format(MAE)
+        print 'MAE = {0:.6f}\t'.format(MAE),
         predictable = len(self.errors)
-        print 'RC  = {0:d}/{1:d} = {2:2.2f}%'.format(predictable, self.total_test, float(predictable) / self.total_test * 100)
+        print 'RC = {0:d}/{1:d} = {2:2.2f}%\t'.format(predictable, self.total_test, float(predictable) / self.total_test * 100),
+        RMSE = math.sqrt(py.mean([e ** 2 for e in self.errors]))
+        print 'RMSE = {0:.6f}'.format(RMSE)
         
     def similarity(self, a, b):
         '''
@@ -91,10 +94,8 @@ class TrustAll(AbstractCF):
     classdocs
     '''
     def __init__(self):
-        '''
-        Constructor
-        '''
         AbstractCF.__init__(self)
+        self.similarity_method = 'constant'
         print 'Run TrustAll method'
         
     def perform(self, train, test):
@@ -104,37 +105,38 @@ class TrustAll(AbstractCF):
             count += 1
             if count % self.peek_interval == 0:
                 print 'current progress =', count, 'out of', len(test)
+                
             # predict test item's rating
             for test_item in test[test_user]:
                 truth = test[test_user][test_item]
-                a = {item: float(rate) for item, rate in train[test_user].items() if item != test_item}
-                mu_a = py.mean(a.values()) if self.prediction_method == 'resnick_formula' else 0
-                if py.isnan(mu_a):
-                    continue
+                a = {item: rate for item, rate in train[test_user].items() if item != test_item}
+                mu_a = 0.0
+                if self.prediction_method == 'resnick_formula':
+                    if not a: continue
+                    mu_a = py.mean(a.values())
+                    # print test_user, test_item, mu_a
                 
                 # find similar users, train, weights
-                rates = []
-                weights = []
+                rates = 0.0
+                weights = 0.0
                 for user in train.viewkeys():
-                    if user == test_user: 
-                        continue
-                    b = {item: float(rate) for item, rate in train[user].items() if (item != test_item) and (test_item in train[user])}
-                    if len(b) == 0: 
-                        continue
-                    sim = self.similarity(a, b)
-                    mu_b = py.mean(b.values()) if self.prediction_method == 'resnick_formula' else 0
-                    if py.isnan(mu_b):
-                        continue
+                    if user == test_user: continue
+                    b = {item: rate for item, rate in train[user].items() if test_item in train[user]}
+                    if not b: continue
                     
-                    rates.append(train[user][test_item] - mu_b)
-                    weights.append(abs(sim))
+                    sim = self.similarity(a, b)
+                    mu_b = py.mean(b.values()) if self.prediction_method == 'resnick_formula' else 0.0
+                    
+                    rates += (train[user][test_item] - mu_b) * sim
+                    weights += abs(sim)
                 
                 # prediction
-                if len(rates) == 0:
-                    continue
-                pred = [mu_a + rate * weight for rate, weight in zip(rates, weights)]
-                pred = sum(pred) / len(rates)
+                if weights == 0.0:continue
+                
+                pred = mu_a + rates / weights
                 errors.append(abs(truth - pred))
+                
+                # print test_user, test_item, truth, pred
         self.errors = errors      
 
 class Trusties(AbstractCF):
