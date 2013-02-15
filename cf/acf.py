@@ -48,6 +48,7 @@ class AbstractCF(object):
                     continue
         
         print 'similarity method =', self.similarity_method
+        print 'prediction method =', self.prediction_method
     
     def prep_test(self, data):
         if self.dataset_mode == 'cold':
