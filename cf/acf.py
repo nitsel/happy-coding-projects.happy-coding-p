@@ -89,14 +89,14 @@ class AbstractCF(object):
         elif self.similarity_method == 'constant':
             return 1.0
         
-class TrustAll(AbstractCF):
+class ClassicCF(AbstractCF):
     '''
     classdocs
     '''
     def __init__(self):
         AbstractCF.__init__(self)
         self.similarity_method = 'constant'
-        print 'Run TrustAll method'
+        print 'Run ClassicCF method'
         
     def perform(self, train, test):
         errors = []
@@ -117,7 +117,7 @@ class TrustAll(AbstractCF):
                     # print test_user, test_item, mu_a
                 
                 # find similar users, train, weights
-                rates = 0.0
+                votes = 0.0
                 weights = 0.0
                 for user in train.viewkeys():
                     if user == test_user: continue
@@ -127,13 +127,13 @@ class TrustAll(AbstractCF):
                     sim = self.similarity(a, b)
                     mu_b = py.mean(b.values()) if self.prediction_method == 'resnick_formula' else 0.0
                     
-                    rates += (train[user][test_item] - mu_b) * sim
+                    votes += sim * (train[user][test_item] - mu_b)
                     weights += abs(sim)
                 
                 # prediction
                 if weights == 0.0:continue
                 
-                pred = mu_a + rates / weights
+                pred = mu_a + votes / weights
                 errors.append(abs(truth - pred))
                 
                 # print test_user, test_item, truth, pred
