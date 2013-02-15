@@ -42,6 +42,8 @@ class AbstractCF(object):
                     self.run_dataset = value
                 elif param == 'dataset.directory':
                     self.dataset_directory = value.replace('$run.dataset$', self.run_dataset)
+                elif param == 'predicting.method':
+                    self.prediction_method = value
                 else:
                     continue
         
@@ -52,7 +54,7 @@ class AbstractCF(object):
             self.test = {user:item_ratings for user, item_ratings in data.items() if len(data[user]) < 5}
         elif self.dataset_mode == 'all':
             self.test = data.copy()
-        self.total_test=sum([len(value) for value in data.viewvalues() ])
+        self.total_test = sum([len(value) for value in data.viewvalues() ])
             
     def execute(self):
         ds = Dataset()
@@ -70,8 +72,7 @@ class AbstractCF(object):
         MAE = py.mean(self.errors)
         print 'MAE = {0:.4f}'.format(MAE)
         predictable = len(self.errors)
-        all_test = self.total_test
-        print 'RC  = {0:d}/{1:d} = {2:2.2f}%'.format(predictable, all_test, float(predictable) / all_test * 100)
+        print 'RC  = {0:d}/{1:d} = {2:2.2f}%'.format(predictable, self.total_test, float(predictable) / self.total_test * 100)
         
     def similarity(self, a, b):
         '''
@@ -110,9 +111,9 @@ class TrustAll(AbstractCF):
             for test_item in test[test_user]:
                 truth = test[test_user][test_item]
                 a = {item: float(rate) for item, rate in train[test_user].items() if item != test_item}
+                mu_a = py.mean(a.values()) if self.prediction_method == 'resnick_formula' else 0
                 
                 # find similar users, train, weights
-                users = []
                 rates = []
                 weights = []
                 for user in train.viewkeys():
@@ -122,14 +123,14 @@ class TrustAll(AbstractCF):
                     if len(b) == 0: 
                         continue
                     sim = self.similarity(a, b)
-                    users.append(user)
-                    rates.append(train[user][test_item])
+                    mu_b = py.mean(b.values()) if self.prediction_method == 'resnick_formula' else 0
+                    rates.append(train[user][test_item] - mu_b)
                     weights.append(sim)
                 
                 # prediction
                 if len(rates) == 0:
                     continue
-                pred = [rate * weight for rate, weight in zip(rates, weights)]
+                pred = [mu_a + rate * weight for rate, weight in zip(rates, weights)]
                 pred = sum(pred) / len(rates)
                 errors.append(abs(truth - pred))
         self.errors = errors      
