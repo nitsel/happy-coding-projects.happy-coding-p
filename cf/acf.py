@@ -16,54 +16,53 @@ class AbstractCF(object):
     '''
     classdocs
     '''
-    similairty_methods = ['pcc', 'cos', 'constant']
-    dataset_modes = ['all', 'coldUsers']
     rating_set = "ratings.txt"
     trust_set = 'trust.txt'
     debug_file = 'debug.txt'
     peek_interval = 10
+    method_id = ''
 
     def __init__(self):
         self.load_config()
         logs.basicConfig(filename=self.debug_file, filemode='w', level=logs.DEBUG, format="%(message)s")
     
     def load_config(self):
+        self.config = {}
         with open('cf.conf', 'r') as f:
             for line in f:
                 if line.find('=') == -1:
                     continue
                 params = line.strip().split('=')
-                param = params[0]
-                value = params[1]
-                if param == 'similarity.method':
-                    self.similarity_method = value.lower()
-                    if self.similarity_method not in self.similairty_methods:
-                        raise ValueError('invalid similarity measures')
-                elif param == 'dataset.mode':
-                    self.dataset_mode = value
-                    if self.dataset_mode not in self.dataset_modes:
-                        raise ValueError('invalid test dataset mode')
-                elif param == 'run.dataset':
-                    self.run_dataset = value
-                elif param == 'dataset.directory':
-                    self.dataset_directory = value.replace('$run.dataset$', self.run_dataset)
-                elif param == 'predicting.method':
-                    self.prediction_method = value
-                elif param == 'kNN':
-                    self.knn = int(value)
-                elif param == 'similarity.threshold':
-                    self.similarity_threashold = float(value)
-                
+                self.config[params[0]] = params[1]
         
+        # some commonly used configurations 
+        self.prediction_method = self.config['predicting.method']
+        self.similarity_method = self.config['similarity.method'].lower()
+        self.similarity_threashold = float(self.config['similarity.threshold'])
+        
+        self.dataset = self.config['run.dataset']
+        self.dataset_mode = self.config['dataset.mode']
+        self.dataset_directory = self.config['dataset.directory'].replace('$run.dataset$', self.dataset)
+        
+        self.knn = int(self.config['kNN'])
+        
+        self.print_config()
+        
+    def print_config(self):
+        print 'Run', self.method_id, 'method'
+        print 'prediction method =', self.prediction_method
         print 'similarity method =', self.similarity_method
         print 'similarity threshold =', self.similarity_threashold
-        print 'prediction method =', self.prediction_method
-    
+        if self.knn > 0: print 'kNN =', self.knn
+        # print self.config
+        
     def prep_test(self, data):
         if self.dataset_mode == 'coldUsers':
             self.test = {user:item_ratings for user, item_ratings in data.items() if len(data[user]) < 5}
         elif self.dataset_mode == 'all':
             self.test = data.copy()
+        else:
+            raise ValueError('invalid test dataset mode')
         self.total_test = sum([len(value) for value in self.test.viewvalues() ])
             
     def execute(self):
@@ -73,12 +72,25 @@ class AbstractCF(object):
         
         self.prep_test(ds.ratings)
         self.perform(ds.ratings, self.test)
-        self.print_performance();
+        self.collect_results();
     
     def perform(self, train, test):
+        validate_method = self.config['validating.method']
+        if validate_method == 'cross_validation':
+            self.cross_over(train, test)
+        elif validate_method == 'leave_one_out':
+            self.leave_one_out(train, test)
+        else:
+            raise ValueError('invalid validation method')
+    
+    def cross_over(self, train, test):
         pass
     
-    def print_performance(self):
+    def leave_one_out(self, train, test):
+        pass
+    
+    def collect_results(self):
+        # print performance
         MAE = py.mean(self.errors)
         mae = 'MAE = {0:.6f}\t'.format(MAE)
         predictable = len(self.errors)
@@ -100,16 +112,21 @@ class AbstractCF(object):
             return sims.cos(a, b)
         elif self.similarity_method == 'constant':
             return 1.0
+        else: 
+            raise ValueError('invalid similarity measures')
         
 class ClassicCF(AbstractCF):
     '''
     classic collaborative filtering algorithm
     '''
     def __init__(self):
+        self.method_id = 'ClassicCF'
         AbstractCF.__init__(self)
-        print 'Run ClassicCF method'
         
-    def perform(self, train, test):
+    def cross_over(self, train, test):
+        pass
+    
+    def leave_one_out(self, train, test):
         errors = []
         count = 0
         for test_user in test.viewkeys():
@@ -135,9 +152,7 @@ class ClassicCF(AbstractCF):
                     if not b: continue
                     
                     weight = self.similarity(a, b)
-                    if py.isnan(weight): continue
-                    # make sure the prediction will always be positive
-                    if weight <= self.similarity_threashold: continue 
+                    if py.isnan(weight) or weight <= self.similarity_threashold: continue 
                     
                     mu_b = py.mean(b.values(), dtype=py.float64) if self.prediction_method == 'resnick_formula' else 0.0
                     
@@ -159,74 +174,45 @@ class ClassicCF(AbstractCF):
                 
         self.errors = errors      
 
-class Trusties(AbstractCF):
+class Trusties(ClassicCF):
     '''
     Trusties prototype for DBSCAN clustering method-based CF
     '''
 
     def __init__(self):
-        AbstractCF.__init__(self)
-        print 'Run Trusties method'
+        self.method_id = 'Trusties'
+        ClassicCF.__init__(self)
         
     def cluster(self, train):
-        users = len(train.viewkeys())
+        '''
+        cluster the training users
+        '''
+        keys = train.keys()
+        users = len(keys)
         similarities = []
         for userA_index in range(users):
             for userB_index in range(userA_index + 1, users):
-                userA = train.viewkeys()[userA_index]
-                userB = train.viewkeys()[userB_index]
+                userA = keys[userA_index]
+                userB = keys[userB_index]
                 a = train[userA]
                 b = train[userB]
                 sim = self.similarity(a, b)
+                if py.isnan(sim) or sim < 0.0: sim = 0.0
                 similarities.append(sim)
         S = distance.squareform(similarities)
         
         # Compute DBSCAN
-        db = DBSCAN(eps=0.5, min_samples=10).fit(S)
+        self.db = DBSCAN(eps=0.5, min_samples=100).fit(S)
         # core_samples = db.core_sample_indices_
-        labels = db.labels_
+        labels = self.db.labels_
 
         # Number of clusters in labels, ignoring noise if present.
         n_clusters_ = len(set(labels)) - (1 if -1 in labels else 0)
         print 'Estimated number of clusters: %d' % n_clusters_
             
-        
-    def perform(self, train, test):
-        errors = []
-        count = 0
-        for test_user in test.viewkeys():
-            count += 1
-            if count % self.peek_interval == 0:
-                print 'current progress =', count, 'out of', len(test)
-            # predict test item's rating
-            for test_item in test[test_user]:
-                truth = test[test_user][test_item]
-                a = {item: float(rate) for item, rate in train[test_user].items() if item != test_item}
-                mu_a = py.mean(a.values()) if self.prediction_method == 'resnick_formula' else 0
-                if py.isnan(mu_a):
-                    continue
-                
-                # find similar users, train, weights
-                rates = []
-                weights = []
-                for user in train.viewkeys():
-                    if user == test_user: 
-                        continue
-                    b = {item: float(rate) for item, rate in train[user].items() if (item != test_item) and (test_item in train[user])}
-                    if len(b) == 0: 
-                        continue
-                    sim = self.similarity(a, b)
-                    mu_b = py.mean(b.values()) if self.prediction_method == 'resnick_formula' else 0
-                    if py.isnan(mu_b):
-                        continue
-                
-                    rates.append(train[user][test_item] - mu_b)
-                    weights.append(abs(sim))
-                
-                # prediction
-                if len(rates) == 0:
-                    continue
-                pred = [mu_a + rate * weight for rate, weight in zip(rates, weights)]
-                pred = sum(pred) / len(rates)
-                errors.append(abs(truth - pred))
-        self.errors = errors      
+    def leave_one_out(self, train, test):
+        pass
+    
+    def cross_over(self, train, test):
+        self.cluster(train)
+             
