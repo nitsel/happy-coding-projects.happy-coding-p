@@ -20,9 +20,11 @@ def pcc(a, b):
         den1 = sum([x ** 2 for x in ras])
         den2 = sum([y ** 2 for y in rbs])
         
+        if den1 == 0.0 or den2 == 0.0: return py.nan
+        
         return num / (math.sqrt(den1) * math.sqrt(den2))
     else:
-        return None
+        return py.nan
 
 def cos(a, b):
     vas, vbs = pairs(a, b)
@@ -33,7 +35,7 @@ def cos(a, b):
         
         return num / (math.sqrt(den1) * math.sqrt(den2))
     else:
-        return None
+        return py.nan
 
 def pairs(a, b):
     vas = []

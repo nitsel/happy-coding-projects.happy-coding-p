@@ -6,6 +6,8 @@ Created on Feb 15, 2013
 import sims
 import math
 import numpy as py
+import logging as logs
+import operator
 from scipy.spatial import distance
 from sklearn.cluster import DBSCAN
 from data import Dataset
@@ -22,6 +24,7 @@ class AbstractCF(object):
 
     def __init__(self):
         self.load_config()
+        logs.basicConfig(filename="debug.txt", filemode='w', level=logs.DEBUG, format="%(message)s")
     
     def load_config(self):
         with open('cf.conf', 'r') as f:
@@ -45,10 +48,14 @@ class AbstractCF(object):
                     self.dataset_directory = value.replace('$run.dataset$', self.run_dataset)
                 elif param == 'predicting.method':
                     self.prediction_method = value
-                else:
-                    continue
+                elif param == 'kNN':
+                    self.knn = int(value)
+                elif param == 'similarity.threshold':
+                    self.similarity_threashold = float(value)
+                
         
         print 'similarity method =', self.similarity_method
+        print 'similarity threshold =', self.similarity_threashold
         print 'prediction method =', self.prediction_method
     
     def prep_test(self, data):
@@ -91,11 +98,10 @@ class AbstractCF(object):
         
 class ClassicCF(AbstractCF):
     '''
-    classdocs
+    classic collaborative filtering algorithm
     '''
     def __init__(self):
         AbstractCF.__init__(self)
-        self.similarity_method = 'constant'
         print 'Run ClassicCF method'
         
     def perform(self, train, test):
@@ -113,30 +119,39 @@ class ClassicCF(AbstractCF):
                 mu_a = 0.0
                 if self.prediction_method == 'resnick_formula':
                     if not a: continue
-                    mu_a = py.mean(a.values())
-                    # print test_user, test_item, mu_a
+                    mu_a = py.mean(a.values(), dtype=py.float64)
                 
-                # find similar users, train, weights
-                votes = 0.0
-                weights = 0.0
+                # find the ratings of similar users and their weights
+                votes = []
+                weights = []
                 for user in train.viewkeys():
                     if user == test_user: continue
-                    b = {item: rate for item, rate in train[user].items() if test_item in train[user]}
+                    b = train[user] if test_item in train[user] else {}
                     if not b: continue
                     
-                    sim = self.similarity(a, b)
-                    mu_b = py.mean(b.values()) if self.prediction_method == 'resnick_formula' else 0.0
+                    weight = self.similarity(a, b)
+                    if py.isnan(weight): continue
+                    # make sure the prediction will always be positive
+                    if weight <= self.similarity_threashold: continue 
                     
-                    votes += sim * (train[user][test_item] - mu_b)
-                    weights += abs(sim)
+                    mu_b = py.mean(b.values(), dtype=py.float64) if self.prediction_method == 'resnick_formula' else 0.0
+                    
+                    votes.append(train[user][test_item] - mu_b)
+                    weights.append(weight)
+                
+                if not votes:continue
+                
+                # k-NN methods: find top-k most similar users according to their weights
+                if self.knn > 0:
+                    sorted_ws = sorted(enumerate(weights), reverse=True, key=operator.itemgetter(1))[:self.knn]
+                    indeces = [item[0] for item in sorted_ws]
+                    weights = [weights[index] for index in indeces]
+                    votes = [votes[index] for index in indeces]
                 
                 # prediction
-                if weights == 0.0:continue
-                
-                pred = mu_a + votes / weights
+                pred = mu_a + py.average(votes, weights=weights)
                 errors.append(abs(truth - pred))
                 
-                # print test_user, test_item, truth, pred
         self.errors = errors      
 
 class Trusties(AbstractCF):
