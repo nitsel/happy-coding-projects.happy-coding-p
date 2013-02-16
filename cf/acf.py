@@ -20,11 +20,12 @@ class AbstractCF(object):
     dataset_modes = ['all', 'coldUsers']
     rating_set = "ratings.txt"
     trust_set = 'trust.txt'
+    debug_file = 'debug.txt'
     peek_interval = 10
 
     def __init__(self):
         self.load_config()
-        logs.basicConfig(filename="debug.txt", filemode='w', level=logs.DEBUG, format="%(message)s")
+        logs.basicConfig(filename=self.debug_file, filemode='w', level=logs.DEBUG, format="%(message)s")
     
     def load_config(self):
         with open('cf.conf', 'r') as f:
@@ -79,11 +80,15 @@ class AbstractCF(object):
     
     def print_performance(self):
         MAE = py.mean(self.errors)
-        print 'MAE = {0:.6f}\t'.format(MAE),
+        mae = 'MAE = {0:.6f}\t'.format(MAE)
         predictable = len(self.errors)
-        print 'RC = {0:d}/{1:d} = {2:2.2f}%\t'.format(predictable, self.total_test, float(predictable) / self.total_test * 100),
+        rc = 'RC = {0:d}/{1:d} = {2:2.2f}%\t'.format(predictable, self.total_test, float(predictable) / self.total_test * 100)
         RMSE = math.sqrt(py.mean([e ** 2 for e in self.errors]))
-        print 'RMSE = {0:.6f}'.format(RMSE)
+        rmse = 'RMSE = {0:.6f}'.format(RMSE)
+        
+        result = mae + rc + rmse
+        print result
+        logs.debug(result)
         
     def similarity(self, a, b):
         '''
