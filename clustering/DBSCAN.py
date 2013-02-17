@@ -13,7 +13,7 @@ from sklearn import metrics
 # Read data from file
 X=[]
 labels_true=[]
-with open('Data/R15.txt', mode='r') as afile:
+with open('Data/D31.txt', mode='r') as afile:
     for line in afile:
         strs = line.split('\t')
         X.append([float(strs[0]), float(strs[1])])
@@ -21,13 +21,13 @@ with open('Data/R15.txt', mode='r') as afile:
         
 
 ##############################################################################
-# Compute similarities
+# Compute distances
 D = distance.squareform(distance.pdist(X))
-S = 1 - (D / np.max(D))
+#S = 1 - (D / np.max(D))
 
 ##############################################################################
 # Compute DBSCAN
-db = DBSCAN(eps=0.5, min_samples=10).fit(S)
+db = DBSCAN(eps=0.5, min_samples=10, metric='precomputed').fit(D)
 core_samples = db.core_sample_indices_
 labels = db.labels_
 
