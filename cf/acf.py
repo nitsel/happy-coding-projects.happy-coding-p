@@ -138,6 +138,11 @@ class AbstractCF(object):
         
         if self.similarity_method == 'pcc':
             return 1 - distance.correlation(u, v)
+        elif self.similarity_method == 'wpcc':
+            n = len(u)
+            r = 10.0
+            w = n / r if n <= r else 1.0
+            return w * (1 - distance.correlation(u, v))
         elif self.similarity_method == 'cos':
             return 1 - distance.cosine(u, v)
         elif self.similarity_method == 'constant':
@@ -292,7 +297,7 @@ class Trusties(ClassicCF):
             similarities = {}
             count += 1
             if count % 20 == 0:
-                print 'index a =', userA_index + 1, 'out of', users
+                print 'current progress =', userA_index + 1, 'out of', users
             for userB_index in range(userA_index + 1, users):
                 userA = keys[userA_index]
                 userB = keys[userB_index]
@@ -318,10 +323,9 @@ class Trusties(ClassicCF):
                 line = line.strip()
                 if not line: continue
                 sim = float(line.split()[2])
+                dist = sim if self.similarity_method == 'euclidean' else 1 - sim
                 
-                # how to handle the nan value ?
-                # if py.isnan(sim): sim = -1
-                D.append(sim)
+                D.append(dist)
         D = distance.squareform(D)
         # D = D/py.max(D)
         
@@ -329,23 +333,44 @@ class Trusties(ClassicCF):
         cluster_method = 'DBSCAN'
         
         if cluster_method == 'DBSCAN':
-            eps = 0.001
+            ''' recommended settings for FilmTrust
+            
+            wpcc (r=10): eps=0.30, minpts=5 => n_clusters=5
+            wpcc (r=10): eps=0.25, minpts=5 => n_clusters=7
+            wpcc (r=10): eps=0.20, minpts=5 => n_clusters=16
+            '''
+            eps = 0.5
             n_clusters = 0
-            while eps < 2:
-                min_samples = 20
-                eps += 0.001
-                while min_samples <= 120: 
-                    self.db = DBSCAN(eps=eps, min_samples=min_samples, metric='precomputed').fit(D)
+            while eps > 0:
+                minpts = 5
+                while minpts <= 100: 
+                    self.db = DBSCAN(eps=eps, min_samples=minpts, metric='precomputed').fit(D)
                     # core_samples = db.core_sample_indices_
                     labels = self.db.labels_
         
                     # Number of clusters in labels, ignoring noise if present.
                     n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
                     
-                    print 'min_sample = {0:d}, eps={1:2.2f}'.format(min_samples, eps),
+                    if n_clusters >= 5:
+                        raw_input('wait for an input to continue?')
+                    
+                    print 'min_sample = {0:d}, eps={1:2.2f},'.format(minpts, eps),
                     print 'Estimated number of clusters: %d' % n_clusters
                     
-                    min_samples += 1
+                    minpts += 5
+                eps -= 0.05
+            
+            '''eps=0.44
+            minpts=75
+            self.db = DBSCAN(eps=eps, min_samples=minpts, metric='precomputed').fit(D)
+            # core_samples = db.core_sample_indices_
+            labels = self.db.labels_
+
+            # Number of clusters in labels, ignoring noise if present.
+            n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+            
+            print 'min_sample = {0:d}, eps={1:2.2f},'.format(minpts, eps),
+            print 'Estimated number of clusters: %d' % n_clusters'''
                     
         elif cluster_method == 'minibatch_kmeans':
             batch_size = 45
