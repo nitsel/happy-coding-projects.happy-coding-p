@@ -1,0 +1,7 @@
+
+syntax: regexp
+^cf/debug\.txt$
+syntax: regexp
+\.txt$
+syntax: regexp
+^cf/results\.csv$
