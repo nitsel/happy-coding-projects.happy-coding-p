@@ -20,7 +20,7 @@ resnick_formula = 'resnick_formula'
 on = 'on'
 off = 'off'
 
-debug = not True
+debug = True
 
 def load_config():
     config = {}
@@ -555,18 +555,7 @@ class Trusties(ClusterCF):
         users = train.keys()
         
         prs = self.gen_cluster_graph(db)
-        
         if debug: print prs
-        
-        ''' test properties of noise users
-        
-        noise_users = [users[x] for x in noises]
-        sum=0
-        cnt=0
-        for user in noise_users:
-            sum+=len(train[user])
-            cnt+=1
-        print 'average rating =', float(sum)/cnt'''
         
         errors = []
         pred_method = self.config['cluster.pred.method']
@@ -584,10 +573,10 @@ class Trusties(ClusterCF):
 
                     preds = []
                     wpred = []
-                    cs = -1  # cluster_users label of active users                  
-                    # step 1: prediction from cluster_users that test_user belongs to
+                    cs = -1  # cluster label of active users                  
+                    # step 1: prediction from clusters that test_user belongs to
                     if user_index > -1 and user_index not in noises:
-                        # predict according to cluster_users members
+                        # predict according to cluster members
                         cs = labels[user_index]  # cl is not -1
                         
                         member_indices = py.where(labels == cs)[0]
@@ -600,14 +589,16 @@ class Trusties(ClusterCF):
                                 u = train[test_user]
                                 v = train[member]
                                 sim = self.similarity(u, v)
-                                if py.isnan(sim): sim = 0
+                                # if py.isnan(sim): sim = 0
+                                if py.isnan(sim) or sim <= self.similarity_threashold:continue
                                 
                                 # I think merging two many weights is not a good thing
                                 # we should only use sim or member weights 
                                 rates.append(train[member][test_item])
-                                trust = trust_weight if member in tns else 0.0
+                                '''trust = trust_weight if member in tns else 0.0
                                 weight = core_weight if index in core_indices else 1.0
-                                weights.append(weight * (1 + sim) + trust)                            
+                                weights.append(weight * (1 + sim) + trust)'''
+                                weights.append(sim)                            
                         if not rates: continue
                         pred = py.average(rates, weights=weights)
                         
@@ -627,11 +618,13 @@ class Trusties(ClusterCF):
                             pred = 0.0
                             # if cl == -1: continue
                             if cl != -1 and cl == cs:continue
-                            if cl == -1: 
-                                nns = [key for key, val in tns_cs.items() if val == -1 and test_item in train[key]]
+                            if cl < -1: 
+                                # nns = [key for key, val in tns_cs.items() if val == -1 and test_item in train[key]]
+                                nns = [users[x] for x in py.where(labels == cl)[0]]
                                 if not nns: continue
                                 
-                                rates = [train[nn][test_item] for nn in nns]
+                                rates = [train[nn][test_item] for nn in nns if test_item in train[nn]]
+                                if not rates: continue
                                 pred = py.average(rates)
                             else: 
                                 member_indices = py.where(labels == cl)[0]
@@ -649,7 +642,7 @@ class Trusties(ClusterCF):
                             
                             weight_cluster = 0 if str(cl) not in prs else (prs[str(cl)] if cl > -1 else 0)
                             weight_trust = tns_cs.values().count(cl) / float(len(tns_cs))
-                            wpred.append(weight_cluster + weight_trust)
+                            wpred.append(weight_trust + weight_cluster)
                             preds.append(pred)
                     
                     # step 3: for users without any trusted neighbors and do not have any predictions from the cluster that he blongs to 
