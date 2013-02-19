@@ -20,6 +20,8 @@ resnick_formula = 'resnick_formula'
 on = 'on'
 off = 'off'
 
+debug = not True
+
 def load_config():
     config = {}
     with open('cf.conf', 'r') as f:
@@ -330,7 +332,7 @@ class ClassicCF(AbstractCF):
 class ClusterCF(ClassicCF):
     
     def __init__(self):
-        self.method_id='Abstract Cluster CF'
+        self.method_id = 'Abstract Cluster CF'
     
     def calc_user_distances(self, train):
         prefix = self.test_set.rindex('.test')
@@ -537,7 +539,7 @@ class Trusties(ClusterCF):
                     edge.weight = float(len(links))
                     g.add_edge(edge)
         
-        g.print_graph()
+        if debug: g.print_graph()
         return g.page_rank(d=0.85, normalized=True)
         
     def perform(self, train, test):
@@ -554,7 +556,7 @@ class Trusties(ClusterCF):
         
         prs = self.gen_cluster_graph(db)
         
-        print prs
+        if debug: print prs
         
         ''' test properties of noise users
         
@@ -742,7 +744,7 @@ class KmeansCF(Trusties):
         self.method_id = 'kmeans_cf'
 
     def cluster_users(self, train):
-        D=self.calc_user_distances(train)
+        D = self.calc_user_distances(train)
         batch_size = 45
         db = MiniBatchKMeans(init='k-means++', n_clusters=10, batch_size=batch_size,
                   n_init=10, max_no_improvement=10, verbose=0).fit(D)
@@ -751,7 +753,7 @@ class KmeansCF(Trusties):
         print 'Estimated number of clusters: %d' % n_clusters
     
     def perform(self, train, test):
-        #self.cluster_users(train)
+        # self.cluster_users(train)
         pass
     
 def main():
