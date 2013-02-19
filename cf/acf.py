@@ -11,6 +11,7 @@ from scipy.spatial import distance
 from data import Dataset
 from sklearn.cluster.k_means_ import MiniBatchKMeans
 from sklearn.cluster import DBSCAN
+from graph import Graph, Vertex, Edge
 
 cross_validation = 'cross_validation'
 leave_one_out = 'leave_one_out'
@@ -84,11 +85,14 @@ class AbstractCF(object):
         test: if test=None, generate test ratings from training set; else select ratings from test set according to the properties from the training set
         '''
         cold_len = 5
+        heavy_len = 10
         if test is None:
             if self.dataset_mode == 'all':
                 return train.copy()
             elif self.dataset_mode == 'cold_users':
                 return {user:item_ratings for user, item_ratings in train.items() if len(train[user]) < cold_len}
+            elif self.dataset_mode == 'heavy_users':
+                return {user:item_ratings for user, item_ratings in train.items() if len(train[user]) > heavy_len}
             else:
                 raise ValueError('invalid test data set mode')
         else:
@@ -96,6 +100,8 @@ class AbstractCF(object):
                 return self.test
             elif self.dataset_mode == 'cold_users':
                 return {user:item_ratings for user, item_ratings in test.items() if user in train and len(train[user]) < cold_len}
+            elif self.dataset_mode == 'heavy_users':
+                return {user:item_ratings for user, item_ratings in test.items() if user in train and len(train[user]) > heavy_len}
             else:
                 raise ValueError('invalid test data set mode')
             pass
@@ -158,7 +164,7 @@ class AbstractCF(object):
         
         print mae + rc + rmse + ', ' + self.dataset_directory + self.rating_set
         
-        if self.config['write.to.results'] == on:
+        if self.config['write.results'] == on:
             results = '{0},{1},{2:.6f},{3:2.2f}%,{4:.6f},{5}'\
                     .format(self.method_id, self.dataset_mode, MAE, RC, RMSE, self.dataset_directory + self.rating_set)
             logs.debug(results)
@@ -351,9 +357,9 @@ class Trusties(ClassicCF):
                 for key, value in similarities.items():
                     f.write(str(userA_index) + ' ' + str(key) + ' ' + str(value) + '\n')  
     
-    def cluster(self, train):
+    def cluster_users(self, train):
         '''
-        cluster the training users
+        cluster_users the training users
         '''
         prefix = self.test_set.rindex('.test')
         prefix = self.test_set[0:prefix]
@@ -512,9 +518,37 @@ class Trusties(ClassicCF):
             labels = db.labels_
             n_clusters = len(set(labels))
             print 'Estimated number of clusters: %d' % n_clusters
-            
+    
+    def generate_cluster_graph(self, db):
+        labels = db.labels_
+        users = self.train.keys()
+        
+        g = Graph()
+        
+        # generate vertices
+        clusters = list(set(labels))
+        if -1 in clusters: clusters.remove(-1)
+        vs = {c: Vertex(c) for c in clusters}
+        
+        # genrate edges
+        for c1 in clusters: 
+            c1ms = [users[x] for x in py.where(labels == c1)[0]]
+            for c2 in clusters: 
+                # currently, we ignore the circular links
+                if c1 == c2: continue
+                c2ms = [users[x] for x in py.where(labels == c2)[0]]
+                links = {c1m:c2m for c1m in c1ms for c2m in c2ms if c1m in self.trust and c2m in self.trust[c1m]}
+                
+                if links:
+                    edge = Edge(vs[c1], vs[c2])
+                    edge.weight = float(len(links))
+                    g.add_edge(edge)
+        
+        g.print_graph()
+        return g.page_rank(d=0.85, normalized=True)
+        
     def perform(self, train, test):
-        db = self.cluster(train)
+        db = self.cluster_users(train)
         
         # for test purpose
         if db is None: os.abort()
@@ -524,6 +558,10 @@ class Trusties(ClassicCF):
 
         noises = py.where(labels == -1)[0]
         users = train.keys()
+        
+        prs = self.generate_cluster_graph(db)
+        
+        print prs
         
         ''' test properties of noise users
         
@@ -551,10 +589,10 @@ class Trusties(ClassicCF):
 
                     preds = []
                     wpred = []
-                    cs = -1  # cluster label of active users                  
-                    # step 1: prediction from cluster that test_user belongs to
+                    cs = -1  # cluster_users label of active users                  
+                    # step 1: prediction from cluster_users that test_user belongs to
                     if user_index > -1 and user_index not in noises:
-                        # predict according to cluster members
+                        # predict according to cluster_users members
                         cs = labels[user_index]  # cl is not -1
                         
                         member_indices = py.where(labels == cs)[0]
@@ -569,6 +607,8 @@ class Trusties(ClassicCF):
                                 sim = self.similarity(u, v)
                                 if py.isnan(sim): sim = 0
                                 
+                                # I think merging two many weights is not a good thing
+                                # we should only use sim or member weights 
                                 rates.append(train[member][test_item])
                                 trust = trust_weight if member in tns else 0.0
                                 weight = core_weight if index in core_indices else 1.0
@@ -577,20 +617,20 @@ class Trusties(ClassicCF):
                         pred = py.average(rates, weights=weights)
                         
                         preds.append(pred)
-                        wpred.append(1.0)
+                        
+                        weight_cluster = 0 if cs not in prs else (prs[str(cs)] if cs > -1 else 0)
+                        wpred.append(1.0 + weight_cluster)
                 
                     # step 2: prediction from clusters that the trusted neighbors belong to
                     if not preds and tns:
-    
                         # find tns' clusters
-                        tns_cs = {}
-                        for tn in tns:
-                            tn_index = users.index(tn) if tn in users else -1
-                            if tn_index == -1: continue
-                            tns_cs[tn] = labels[tn_index]
+                        tn_indices = [users.index(tn) for tn in tns if tn in users]
+                        tns_cs = {users[index]: labels[index] for index in tn_indices}
                         
                         cls = list(set(tns_cs.values()))
                         for cl in cls: 
+                            pred = 0.0
+                            # if cl == -1: continue
                             if cl != -1 and cl == cs:continue
                             if cl == -1: 
                                 nns = [key for key, val in tns_cs.items() if val == -1 and test_item in train[key]]
@@ -598,7 +638,6 @@ class Trusties(ClassicCF):
                                 
                                 rates = [train[nn][test_item] for nn in nns]
                                 pred = py.average(rates)
-                                preds.append(pred)
                             else: 
                                 member_indices = py.where(labels == cl)[0]
                                 members = [users[x] for x in member_indices]
@@ -609,24 +648,25 @@ class Trusties(ClassicCF):
                                         rates.append(train[member][test_item])
                                         trust = trust_weight if member in self.trust[test_user] else 0.0
                                         weight = core_weight if index in core_indices else 1.0
-                                        weights.append(weight + trust)                            
+                                        weights.append(weight * (1 + trust))                            
                                 if not rates: continue
                                 pred = py.average(rates, weights=weights)
-                                preds.append(pred)
                             
-                            # len_cs = len(tns_cs) - (1 if -1 in tns_cs else 0)    
-                            w = tns_cs.values().count(cl) / float(len(tns_cs))
-                            wpred.append(w)
+                            weight_cluster = 0 if str(cl) not in prs else (prs[str(cl)] if cl > -1 else 0)
+                            weight_trust = tns_cs.values().count(cl) / float(len(tns_cs))
+                            wpred.append(weight_cluster + weight_trust)
+                            preds.append(pred)
                     
                     # step 3: for users without any trusted neighbors and do not have any predictions from the cluster that he blongs to 
-                    if not tns and not preds:
+                    if not tns and not preds and not False:
                         for cl in list(set(labels)):
-                            member_indices = py.where(labels == cl)[0]
-                            members = [users[x] for x in member_indices]
+                            # if cl == -1: continue
+                            members = [users[x] for x in py.where(labels == cl)[0]]
                             rates = [train[member][test_item] for member in members if test_item in train[member]]
                             if not rates: continue
                             pred = py.average(rates)
                             preds.append(pred)
+                            # wpred.append(prs[str(cl)] if str(cl) in prs else 1.0)
                         if not preds: continue
                         pred = py.average(preds)
                         error = abs(pred - test[test_user][test_item])
@@ -680,6 +720,23 @@ class Trusties(ClassicCF):
                             if py.isnan(weight) or weight <= self.similarity_threashold: continue
                             rates.append(train[member][test_item])
                             weights.append(weight)                            
+                    if not rates: continue
+                    pred = py.average(rates, weights=weights)
+                
+                elif pred_method == 'wmcf':
+                    rates = []
+                    weights = []
+                    for member, index in zip(members, member_indices):
+                        if test_item in train[member]:
+                            u = train[test_user]
+                            v = train[member]
+                            weight = self.similarity(u, v)
+                            
+                            if py.isnan(weight) or weight <= self.similarity_threashold: continue
+                            rates.append(train[member][test_item])
+                            
+                            w = 5.0 if index in core_indices else 1.0
+                            weights.append(w + weight)                            
                     if not rates: continue
                     pred = py.average(rates, weights=weights)
                     
