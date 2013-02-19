@@ -38,12 +38,10 @@ class AbstractCF(object):
     trust_set = 'trust.txt'
     debug_file = 'results.csv'
     peek_interval = 20
-    method_id = ''
     config = {}
 
     def __init__(self):
-        self.config_cf()
-        logs.basicConfig(filename=self.debug_file, filemode='a', level=logs.DEBUG, format="%(message)s")
+        self.method_id = 'abstract_cf'
     
     def config_cf(self):
         if not self.config: self.config = load_config()
@@ -107,6 +105,9 @@ class AbstractCF(object):
             pass
         
     def execute(self):
+        self.config_cf()
+        logs.basicConfig(filename=self.debug_file, filemode='a', level=logs.DEBUG, format="%(message)s")
+        
         # run multiple times at one shot
         batch_run = self.config['cross.validation.batch']
         if batch_run == on: 
@@ -204,9 +205,8 @@ class ClassicCF(AbstractCF):
     '''
     classic collaborative filtering algorithm
     '''
-    method_id = "ClassicCF"
     def __init__(self):
-        AbstractCF.__init__(self)
+        self.method_id = "ClassicCF"
         
     def cross_over(self, train, test):
         errors = []
@@ -326,48 +326,37 @@ class ClassicCF(AbstractCF):
                 errors.append(abs(truth - pred))
                 
         self.errors = errors   
-           
-class Trusties(ClassicCF):
-    '''
-    Trusties prototype for DBSCAN clustering method-based CF
-    '''
-    method_id = 'Trusties'
+
+class ClusterCF(ClassicCF):
     
     def __init__(self):
-        ClassicCF.__init__(self)
-        
-    def compute_similarities(self, train):
-        keys = train.keys()
-        users = len(keys)
-        count = 0
-        for userA_index in range(users):
-            similarities = {}
-            count += 1
-            if count % 20 == 0:
-                print 'current progress =', userA_index + 1, 'out of', users
-            for userB_index in range(userA_index + 1, users):
-                userA = keys[userA_index]
-                userB = keys[userB_index]
-                a = train[userA]
-                b = train[userB]
-                
-                sim = self.similarity(a, b)
-                similarities[userB_index] = sim
-            with open(self.similarity_file, 'a') as f:
-                for key, value in similarities.items():
-                    f.write(str(userA_index) + ' ' + str(key) + ' ' + str(value) + '\n')  
+        self.method_id='Abstract Cluster CF'
     
-    def cluster_users(self, train):
-        '''
-        cluster_users the training users
-        '''
+    def calc_user_distances(self, train):
         prefix = self.test_set.rindex('.test')
         prefix = self.test_set[0:prefix]
         self.similarity_file = self.dataset_directory + prefix + '-' + self.similarity_method + '.txt'
         
-        if not os.path.exists(self.similarity_file):
-            self.compute_similarities(train)
-        
+        if not os.path.exists(self.similarity_file): 
+            keys = train.keys()
+            users = len(keys)
+            count = 0
+            for userA_index in range(users):
+                similarities = {}
+                count += 1
+                if count % 20 == 0:
+                    print 'current progress =', userA_index + 1, 'out of', users
+                for userB_index in range(userA_index + 1, users):
+                    userA = keys[userA_index]
+                    userB = keys[userB_index]
+                    a = train[userA]
+                    b = train[userB]
+                    
+                    sim = self.similarity(a, b)
+                    similarities[userB_index] = sim
+                with open(self.similarity_file, 'a') as f:
+                    for key, value in similarities.items():
+                        f.write(str(userA_index) + ' ' + str(key) + ' ' + str(value) + '\n')  
         D = []
         with open(self.similarity_file, 'r') as f:
             for line in f:
@@ -377,149 +366,153 @@ class Trusties(ClassicCF):
                 dist = sim if self.similarity_method == 'euclidean' else 1 - sim
                 
                 D.append(dist)
-        D = distance.squareform(D)
-        
-        # Compute DBSCAN
-        cluster_method = self.config['cluster.method']
-        
-        if cluster_method == 'DBSCAN':
-            ''' recommended settings for FilmTrust
-            
-            wpcc (r=10):
-            
-            eps=0.30, minpts = 5, clusters: 5, clustered points: 754, core points: 460 [noted]
-            eps=0.29, minpts = 2, clusters: 5, clustered points: 778, core points: 778
-            eps=0.29, minpts = 10, clusters: 5, clustered points: 456, core points: 101
-            eps=0.28, minpts = 2, clusters: 6, clustered points: 753, core points: 753
-            eps=0.28, minpts = 8, clusters: 5, clustered points: 501, core points: 131
-            eps=0.28, minpts = 9, clusters: 5, clustered points: 438, core points: 97
-            eps=0.27, minpts = 2, clusters: 8, clustered points: 731, core points: 731
-            eps=0.27, minpts = 6, clusters: 6, clustered points: 552, core points: 216
-            eps=0.27, minpts = 10, clusters: 7, clustered points: 309, core points: 52
-            eps=0.26, minpts = 2, clusters: 15, clustered points: 693, core points: 693
-            eps=0.26, minpts = 3, clusters: 6, clustered points: 675, core points: 517 [noted]
-            eps=0.26, minpts = 4, clusters: 7, clustered points: 629, core points: 371
-            eps=0.26, minpts = 5, clusters: 5, clustered points: 554, core points: 258
-            eps=0.26, minpts = 6, clusters: 7, clustered points: 489, core points: 171
-            eps=0.26, minpts = 7, clusters: 5, clustered points: 417, core points: 113
-            eps=0.26, minpts = 8, clusters: 6, clustered points: 356, core points: 79
-            eps=0.26, minpts = 9, clusters: 6, clustered points: 298, core points: 54
-            eps=0.26, minpts = 10, clusters: 7, clustered points: 242, core points: 36
-            eps=0.25, minpts = 2, clusters: 20, clustered points: 652, core points: 652
-            eps=0.25, minpts = 3, clusters: 7, clustered points: 626, core points: 470 [noted]
-            eps=0.25, minpts = 4, clusters: 7, clustered points: 573, core points: 315
-            eps=0.25, minpts = 5, clusters: 7, clustered points: 488, core points: 203
-            eps=0.25, minpts = 6, clusters: 7, clustered points: 420, core points: 131
-            eps=0.25, minpts = 8, clusters: 6, clustered points: 284, core points: 55
-            eps=0.24, minpts = 2, clusters: 27, clustered points: 628, core points: 628
-            eps=0.24, minpts = 3, clusters: 11, clustered points: 596, core points: 423 [noted]
-            eps=0.24, minpts = 4, clusters: 8, clustered points: 513, core points: 258
-            eps=0.24, minpts = 5, clusters: 12, clustered points: 425, core points: 156
-            eps=0.24, minpts = 6, clusters: 6, clustered points: 356, core points: 105
-            eps=0.24, minpts = 9, clusters: 5, clustered points: 142, core points: 19
-            eps=0.23, minpts = 2, clusters: 36, clustered points: 590, core points: 590
-            eps=0.23, minpts = 3, clusters: 12, clustered points: 542, core points: 364
-            eps=0.23, minpts = 4, clusters: 14, clustered points: 456, core points: 212
-            eps=0.23, minpts = 5, clusters: 10, clustered points: 354, core points: 123
-            eps=0.23, minpts = 6, clusters: 9, clustered points: 279, core points: 77
-            eps=0.23, minpts = 8, clusters: 5, clustered points: 133, core points: 21
-            eps=0.22, minpts = 2, clusters: 48, clustered points: 544, core points: 544
-            eps=0.22, minpts = 3, clusters: 13, clustered points: 474, core points: 296
-            eps=0.22, minpts = 4, clusters: 15, clustered points: 381, core points: 161
-            eps=0.22, minpts = 5, clusters: 16, clustered points: 288, core points: 89
-            eps=0.22, minpts = 6, clusters: 7, clustered points: 206, core points: 53
-            eps=0.22, minpts = 7, clusters: 8, clustered points: 133, core points: 22
-            eps=0.22, minpts = 8, clusters: 6, clustered points: 86, core points: 10
-            eps=0.21, minpts = 2, clusters: 57, clustered points: 504, core points: 504
-            eps=0.21, minpts = 3, clusters: 17, clustered points: 424, core points: 253
-            eps=0.21, minpts = 4, clusters: 20, clustered points: 325, core points: 133
-            eps=0.21, minpts = 5, clusters: 14, clustered points: 230, core points: 70
-            eps=0.21, minpts = 6, clusters: 10, clustered points: 146, core points: 32
-            eps=0.21, minpts = 7, clusters: 8, clustered points: 90, core points: 12
-            eps=0.20, minpts = 2, clusters: 63, clustered points: 465, core points: 465
-            eps=0.20, minpts = 3, clusters: 20, clustered points: 379, core points: 218
-            eps=0.20, minpts = 4, clusters: 23, clustered points: 277, core points: 102
-            eps=0.20, minpts = 5, clusters: 16, clustered points: 189, core points: 52
-            eps=0.20, minpts = 6, clusters: 10, clustered points: 108, core points: 20
-            eps=0.20, minpts = 7, clusters: 5, clustered points: 57, core points: 8
-            eps=0.19, minpts = 2, clusters: 71, clustered points: 409, core points: 409
-            eps=0.19, minpts = 3, clusters: 23, clustered points: 313, core points: 171
-            eps=0.19, minpts = 4, clusters: 24, clustered points: 217, core points: 76
-            eps=0.19, minpts = 5, clusters: 14, clustered points: 114, core points: 26
-            eps=0.19, minpts = 6, clusters: 6, clustered points: 56, core points: 8
-            eps=0.18, minpts = 2, clusters: 82, clustered points: 370, core points: 370
-            eps=0.18, minpts = 3, clusters: 26, clustered points: 258, core points: 135
-            eps=0.18, minpts = 4, clusters: 20, clustered points: 168, core points: 57
-            eps=0.18, minpts = 5, clusters: 8, clustered points: 70, core points: 14
-            eps=0.18, minpts = 6, clusters: 5, clustered points: 48, core points: 7
-            eps=0.17, minpts = 2, clusters: 78, clustered points: 317, core points: 317
-            eps=0.17, minpts = 3, clusters: 24, clustered points: 209, core points: 108
-            eps=0.17, minpts = 4, clusters: 15, clustered points: 123, core points: 40
-            eps=0.17, minpts = 5, clusters: 7, clustered points: 61, core points: 12
-            eps=0.16, minpts = 2, clusters: 74, clustered points: 262, core points: 262
-            eps=0.16, minpts = 3, clusters: 25, clustered points: 164, core points: 81
-            eps=0.16, minpts = 4, clusters: 10, clustered points: 83, core points: 28
-            eps=0.15, minpts = 2, clusters: 71, clustered points: 222, core points: 222
-            eps=0.15, minpts = 3, clusters: 22, clustered points: 124, core points: 59
-            eps=0.15, minpts = 4, clusters: 8, clustered points: 50, core points: 14
-            eps=0.14, minpts = 2, clusters: 65, clustered points: 180, core points: 180
-            eps=0.14, minpts = 3, clusters: 17, clustered points: 84, core points: 36
-            eps=0.13, minpts = 2, clusters: 55, clustered points: 145, core points: 145
-            eps=0.13, minpts = 3, clusters: 13, clustered points: 61, core points: 27
-            eps=0.13, minpts = 4, clusters: 5, clustered points: 24, core points: 6
-            eps=0.12, minpts = 2, clusters: 47, clustered points: 121, core points: 121
-            eps=0.12, minpts = 3, clusters: 11, clustered points: 49, core points: 21
-            eps=0.11, minpts = 2, clusters: 32, clustered points: 85, core points: 85
-            eps=0.11, minpts = 3, clusters: 10, clustered points: 41, core points: 18
-            eps=0.10, minpts = 2, clusters: 25, clustered points: 62, core points: 62
-            eps=0.10, minpts = 3, clusters: 6, clustered points: 24, core points: 10
-            eps=0.09, minpts = 2, clusters: 20, clustered points: 46, core points: 46
-            eps=0.08, minpts = 2, clusters: 14, clustered points: 32, core points: 32
-            eps=0.07, minpts = 2, clusters: 11, clustered points: 24, core points: 24
-            eps=0.06, minpts = 2, clusters: 8, clustered points: 16, core points: 16
-            eps=0.05, minpts = 2, clusters: 7, clustered points: 14, core points: 14
-            eps=0.04, minpts = 2, clusters: 6, clustered points: 12, core points: 12
-            '''
-            is_test = not True
-            if is_test:
-                eps = 0.30
-                n_clusters = 0
-                while eps > 0:
-                    minpts = 2
-                    while minpts <= 10: 
-                        db = DBSCAN(eps=eps, min_samples=minpts, metric='precomputed').fit(D)
-                        core_points = db.core_sample_indices_
-                        labels = self.db.labels_
-            
-                        # Number of clusters in labels, ignoring noise if present.
-                        n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-                        
-                        n_points = len(labels) - len([x for x in labels if x == -1])
-                        
-                        if n_clusters >= 5:
-                            # raw_input('wait for an input to continue?')
-                        
-                            result = 'eps={:2.2f}, minpts = {:d}, clusters: {:d}, clustered points: {:d}, core points: {:d}'\
-                                    .format(eps, minpts, n_clusters, n_points, len(core_points))
-                            print result
-                            logs.debug(result)
-                        
-                        minpts += 1
-                    eps -= 0.01
-            else:
-                eps = 0.26
-                minpts = 3
-                return DBSCAN(eps=eps, min_samples=minpts, metric='precomputed').fit(D)
-                    
-        elif cluster_method == 'minibatch_kmeans':
-            batch_size = 45
-            db = MiniBatchKMeans(init='k-means++', n_clusters=10, batch_size=batch_size,
-                      n_init=10, max_no_improvement=10, verbose=0).fit(D)
-            labels = db.labels_
-            n_clusters = len(set(labels))
-            print 'Estimated number of clusters: %d' % n_clusters
+        return distance.squareform(D)
     
-    def generate_cluster_graph(self, db):
+    def perform(self, train, test):
+        pass
+
+class Trusties(ClusterCF):
+    '''
+    Trusties prototype for DBSCAN clustering method-based CF
+    '''
+    def __init__(self):
+        self.method_id = 'Trusties'
+        
+    def cluster_users(self, train):
+        '''
+        cluster_users the training users
+        '''
+        D = self.calc_user_distances(train)
+        
+        ''' recommended settings for FilmTrust
+        
+        wpcc (r=10):
+        
+        eps=0.30, minpts = 5, clusters: 5, clustered points: 754, core points: 460 [noted]
+        eps=0.29, minpts = 2, clusters: 5, clustered points: 778, core points: 778
+        eps=0.29, minpts = 10, clusters: 5, clustered points: 456, core points: 101
+        eps=0.28, minpts = 2, clusters: 6, clustered points: 753, core points: 753
+        eps=0.28, minpts = 8, clusters: 5, clustered points: 501, core points: 131
+        eps=0.28, minpts = 9, clusters: 5, clustered points: 438, core points: 97
+        eps=0.27, minpts = 2, clusters: 8, clustered points: 731, core points: 731
+        eps=0.27, minpts = 6, clusters: 6, clustered points: 552, core points: 216
+        eps=0.27, minpts = 10, clusters: 7, clustered points: 309, core points: 52
+        eps=0.26, minpts = 2, clusters: 15, clustered points: 693, core points: 693
+        eps=0.26, minpts = 3, clusters: 6, clustered points: 675, core points: 517 [noted]
+        eps=0.26, minpts = 4, clusters: 7, clustered points: 629, core points: 371
+        eps=0.26, minpts = 5, clusters: 5, clustered points: 554, core points: 258
+        eps=0.26, minpts = 6, clusters: 7, clustered points: 489, core points: 171
+        eps=0.26, minpts = 7, clusters: 5, clustered points: 417, core points: 113
+        eps=0.26, minpts = 8, clusters: 6, clustered points: 356, core points: 79
+        eps=0.26, minpts = 9, clusters: 6, clustered points: 298, core points: 54
+        eps=0.26, minpts = 10, clusters: 7, clustered points: 242, core points: 36
+        eps=0.25, minpts = 2, clusters: 20, clustered points: 652, core points: 652
+        eps=0.25, minpts = 3, clusters: 7, clustered points: 626, core points: 470 [noted]
+        eps=0.25, minpts = 4, clusters: 7, clustered points: 573, core points: 315
+        eps=0.25, minpts = 5, clusters: 7, clustered points: 488, core points: 203
+        eps=0.25, minpts = 6, clusters: 7, clustered points: 420, core points: 131
+        eps=0.25, minpts = 8, clusters: 6, clustered points: 284, core points: 55
+        eps=0.24, minpts = 2, clusters: 27, clustered points: 628, core points: 628
+        eps=0.24, minpts = 3, clusters: 11, clustered points: 596, core points: 423 [noted]
+        eps=0.24, minpts = 4, clusters: 8, clustered points: 513, core points: 258
+        eps=0.24, minpts = 5, clusters: 12, clustered points: 425, core points: 156
+        eps=0.24, minpts = 6, clusters: 6, clustered points: 356, core points: 105
+        eps=0.24, minpts = 9, clusters: 5, clustered points: 142, core points: 19
+        eps=0.23, minpts = 2, clusters: 36, clustered points: 590, core points: 590
+        eps=0.23, minpts = 3, clusters: 12, clustered points: 542, core points: 364
+        eps=0.23, minpts = 4, clusters: 14, clustered points: 456, core points: 212
+        eps=0.23, minpts = 5, clusters: 10, clustered points: 354, core points: 123
+        eps=0.23, minpts = 6, clusters: 9, clustered points: 279, core points: 77
+        eps=0.23, minpts = 8, clusters: 5, clustered points: 133, core points: 21
+        eps=0.22, minpts = 2, clusters: 48, clustered points: 544, core points: 544
+        eps=0.22, minpts = 3, clusters: 13, clustered points: 474, core points: 296
+        eps=0.22, minpts = 4, clusters: 15, clustered points: 381, core points: 161
+        eps=0.22, minpts = 5, clusters: 16, clustered points: 288, core points: 89
+        eps=0.22, minpts = 6, clusters: 7, clustered points: 206, core points: 53
+        eps=0.22, minpts = 7, clusters: 8, clustered points: 133, core points: 22
+        eps=0.22, minpts = 8, clusters: 6, clustered points: 86, core points: 10
+        eps=0.21, minpts = 2, clusters: 57, clustered points: 504, core points: 504
+        eps=0.21, minpts = 3, clusters: 17, clustered points: 424, core points: 253
+        eps=0.21, minpts = 4, clusters: 20, clustered points: 325, core points: 133
+        eps=0.21, minpts = 5, clusters: 14, clustered points: 230, core points: 70
+        eps=0.21, minpts = 6, clusters: 10, clustered points: 146, core points: 32
+        eps=0.21, minpts = 7, clusters: 8, clustered points: 90, core points: 12
+        eps=0.20, minpts = 2, clusters: 63, clustered points: 465, core points: 465
+        eps=0.20, minpts = 3, clusters: 20, clustered points: 379, core points: 218
+        eps=0.20, minpts = 4, clusters: 23, clustered points: 277, core points: 102
+        eps=0.20, minpts = 5, clusters: 16, clustered points: 189, core points: 52
+        eps=0.20, minpts = 6, clusters: 10, clustered points: 108, core points: 20
+        eps=0.20, minpts = 7, clusters: 5, clustered points: 57, core points: 8
+        eps=0.19, minpts = 2, clusters: 71, clustered points: 409, core points: 409
+        eps=0.19, minpts = 3, clusters: 23, clustered points: 313, core points: 171
+        eps=0.19, minpts = 4, clusters: 24, clustered points: 217, core points: 76
+        eps=0.19, minpts = 5, clusters: 14, clustered points: 114, core points: 26
+        eps=0.19, minpts = 6, clusters: 6, clustered points: 56, core points: 8
+        eps=0.18, minpts = 2, clusters: 82, clustered points: 370, core points: 370
+        eps=0.18, minpts = 3, clusters: 26, clustered points: 258, core points: 135
+        eps=0.18, minpts = 4, clusters: 20, clustered points: 168, core points: 57
+        eps=0.18, minpts = 5, clusters: 8, clustered points: 70, core points: 14
+        eps=0.18, minpts = 6, clusters: 5, clustered points: 48, core points: 7
+        eps=0.17, minpts = 2, clusters: 78, clustered points: 317, core points: 317
+        eps=0.17, minpts = 3, clusters: 24, clustered points: 209, core points: 108
+        eps=0.17, minpts = 4, clusters: 15, clustered points: 123, core points: 40
+        eps=0.17, minpts = 5, clusters: 7, clustered points: 61, core points: 12
+        eps=0.16, minpts = 2, clusters: 74, clustered points: 262, core points: 262
+        eps=0.16, minpts = 3, clusters: 25, clustered points: 164, core points: 81
+        eps=0.16, minpts = 4, clusters: 10, clustered points: 83, core points: 28
+        eps=0.15, minpts = 2, clusters: 71, clustered points: 222, core points: 222
+        eps=0.15, minpts = 3, clusters: 22, clustered points: 124, core points: 59
+        eps=0.15, minpts = 4, clusters: 8, clustered points: 50, core points: 14
+        eps=0.14, minpts = 2, clusters: 65, clustered points: 180, core points: 180
+        eps=0.14, minpts = 3, clusters: 17, clustered points: 84, core points: 36
+        eps=0.13, minpts = 2, clusters: 55, clustered points: 145, core points: 145
+        eps=0.13, minpts = 3, clusters: 13, clustered points: 61, core points: 27
+        eps=0.13, minpts = 4, clusters: 5, clustered points: 24, core points: 6
+        eps=0.12, minpts = 2, clusters: 47, clustered points: 121, core points: 121
+        eps=0.12, minpts = 3, clusters: 11, clustered points: 49, core points: 21
+        eps=0.11, minpts = 2, clusters: 32, clustered points: 85, core points: 85
+        eps=0.11, minpts = 3, clusters: 10, clustered points: 41, core points: 18
+        eps=0.10, minpts = 2, clusters: 25, clustered points: 62, core points: 62
+        eps=0.10, minpts = 3, clusters: 6, clustered points: 24, core points: 10
+        eps=0.09, minpts = 2, clusters: 20, clustered points: 46, core points: 46
+        eps=0.08, minpts = 2, clusters: 14, clustered points: 32, core points: 32
+        eps=0.07, minpts = 2, clusters: 11, clustered points: 24, core points: 24
+        eps=0.06, minpts = 2, clusters: 8, clustered points: 16, core points: 16
+        eps=0.05, minpts = 2, clusters: 7, clustered points: 14, core points: 14
+        eps=0.04, minpts = 2, clusters: 6, clustered points: 12, core points: 12
+        '''
+        is_test = not True
+        if is_test:
+            eps = 0.30
+            n_clusters = 0
+            while eps > 0:
+                minpts = 2
+                while minpts <= 10: 
+                    db = DBSCAN(eps=eps, min_samples=minpts, metric='precomputed').fit(D)
+                    core_points = db.core_sample_indices_
+                    labels = self.db.labels_
+        
+                    # Number of clusters in labels, ignoring noise if present.
+                    n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+                    
+                    n_points = len(labels) - len([x for x in labels if x == -1])
+                    
+                    if n_clusters >= 5:
+                        # raw_input('wait for an input to continue?')
+                    
+                        result = 'eps={:2.2f}, minpts = {:d}, clusters: {:d}, clustered points: {:d}, core points: {:d}'\
+                                .format(eps, minpts, n_clusters, n_points, len(core_points))
+                        print result
+                        logs.debug(result)
+                    
+                    minpts += 1
+                eps -= 0.01
+        else:
+            eps = 0.26
+            minpts = 3
+            return DBSCAN(eps=eps, min_samples=minpts, metric='precomputed').fit(D)
+                    
+    def gen_cluster_graph(self, db):
         labels = db.labels_
         users = self.train.keys()
         
@@ -559,7 +552,7 @@ class Trusties(ClassicCF):
         noises = py.where(labels == -1)[0]
         users = train.keys()
         
-        prs = self.generate_cluster_graph(db)
+        prs = self.gen_cluster_graph(db)
         
         print prs
         
@@ -743,6 +736,23 @@ class Trusties(ClassicCF):
                 error = abs(pred - test[test_user][test_item])
                 errors.append(error)
         self.errors = errors
+
+class KmeansCF(Trusties):
+    def __init__(self):
+        self.method_id = 'kmeans_cf'
+
+    def cluster_users(self, train):
+        D=self.calc_user_distances(train)
+        batch_size = 45
+        db = MiniBatchKMeans(init='k-means++', n_clusters=10, batch_size=batch_size,
+                  n_init=10, max_no_improvement=10, verbose=0).fit(D)
+        labels = db.labels_
+        n_clusters = len(set(labels))
+        print 'Estimated number of clusters: %d' % n_clusters
+    
+    def perform(self, train, test):
+        #self.cluster_users(train)
+        pass
     
 def main():
     config = load_config()
