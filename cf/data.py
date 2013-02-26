@@ -5,28 +5,29 @@ Created on Feb 13, 2013
 '''
 class Dataset(object): 
     def __init__(self):
-        self.users = []
-        self.items = []
         self.count = 0  # number of ratings
         
     def load_ratings(self, file_path):
         ''' {user, {item: rating}} '''
-        data = {}
+        user_data = {}
+        item_data = {}
         with open(file_path, 'r') as r:
             for line in r:
                 line = line.strip()
                 if not line: continue
                 
                 user, item, rating = line.split()
-                item_ratings = data[user] if user in data else {};
+                
+                item_ratings = user_data[user] if user in user_data else {}
                 item_ratings[item] = float(rating)
-                data[user] = item_ratings
-                if user not in self.users:
-                    self.users.append(user)
-                if item not in self.items:
-                    self.items.append(item)
+                user_data[user] = item_ratings
+                
+                user_ratings = item_data[item] if item in item_data else {}
+                user_ratings[user] = float(rating)
+                item_data[item] = user_ratings
+                
                 self.count += 1
-        return data
+        return user_data, item_data
     
     def load_trust(self, file_path):
         ''' {trustor, {trustee, trust}} '''

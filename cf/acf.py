@@ -9,9 +9,10 @@ import logging as logs
 import operator
 from scipy.spatial import distance
 from data import Dataset
-from sklearn.cluster.k_means_ import MiniBatchKMeans
 from sklearn.cluster import DBSCAN
 from graph import Graph, Vertex, Edge
+import random
+from sklearn.cluster.k_means_ import KMeans
 
 cross_validation = 'cross_validation'
 leave_one_out = 'leave_one_out'
@@ -20,7 +21,8 @@ resnick_formula = 'resnick_formula'
 on = 'on'
 off = 'off'
 
-debug = True
+debug = not True
+verbose = not True
 
 def load_config():
     config = {}
@@ -99,9 +101,9 @@ class AbstractCF(object):
             if self.dataset_mode == 'all':
                 return self.test
             elif self.dataset_mode == 'cold_users':
-                return {user:item_ratings for user, item_ratings in test.items() if user in train and len(train[user]) < cold_len}
+                return {user:item_ratings for user, item_ratings in test.items() if user not in train or len(train[user]) < cold_len}
             elif self.dataset_mode == 'heavy_users':
-                return {user:item_ratings for user, item_ratings in test.items() if user in train and len(train[user]) > heavy_len}
+                return {user:item_ratings for user, item_ratings in test.items() if user not in train or len(train[user]) > heavy_len}
             else:
                 raise ValueError('invalid test data set mode')
             pass
@@ -111,8 +113,8 @@ class AbstractCF(object):
         logs.basicConfig(filename=self.debug_file, filemode='a', level=logs.DEBUG, format="%(message)s")
         
         # run multiple times at one shot
-        batch_run = self.config['cross.validation.batch']
-        if batch_run == on: 
+        batch_run = self.config['cross.validation.batch'] == on or int(self.config['kmeans.init']) > 1
+        if batch_run: 
             self.multiple_run()
         else:
             self.single_run()
@@ -123,15 +125,18 @@ class AbstractCF(object):
                 self.rating_set = 'u' + str(i) + '.base'
                 self.test_set = 'u' + str(i) + '.test'
                 self.single_run()
+        elif int(self.config['kmeans.init']) > 1:
+            for i in range(int(self.config['kmeans.init'])):
+                self.single_run()
             
     def single_run(self):    
         # import training rating and trust data
         ds = Dataset()
-        self.train = ds.load_ratings(self.dataset_directory + self.rating_set)
+        self.train, self.items = ds.load_ratings(self.dataset_directory + self.rating_set)
         self.trust = ds.load_trust(self.dataset_directory + self.trust_set)
         
         # prepare test set
-        self.test = ds.load_ratings(self.dataset_directory + self.test_set)  if self.validate_method == cross_validation else None
+        self.test = ds.load_ratings(self.dataset_directory + self.test_set)[0]  if self.validate_method == cross_validation else None
         self.test = self.prep_test(self.train, self.test)
         
         # execute recommendations
@@ -222,7 +227,10 @@ class ClassicCF(AbstractCF):
             count += 1
             if count % self.peek_interval == 0:
                 print 'current progress =', count, 'out of', len(test)
-                
+            
+            # trust information
+            # if test_user in self.trust:continue
+            
             # predict test item's rating
             for test_item in test[test_user]:
                 truth = test[test_user][test_item]
@@ -380,9 +388,9 @@ class Trusties(ClusterCF):
     def __init__(self):
         self.method_id = 'Trusties'
         
-    def cluster_users(self, train):
+    def kmeans(self, train):
         '''
-        cluster_users the training users
+        kmeans the training users
         '''
         D = self.calc_user_distances(train)
         
@@ -501,7 +509,6 @@ class Trusties(ClusterCF):
                     
                     if n_clusters >= 5:
                         # raw_input('wait for an input to continue?')
-                    
                         result = 'eps={:2.2f}, minpts = {:d}, clusters: {:d}, clustered points: {:d}, core points: {:d}'\
                                 .format(eps, minpts, n_clusters, n_points, len(core_points))
                         print result
@@ -510,9 +517,9 @@ class Trusties(ClusterCF):
                     minpts += 1
                 eps -= 0.01
         else:
-            eps = 0.26
-            minpts = 3
-            return DBSCAN(eps=eps, min_samples=minpts, metric='precomputed').fit(D)
+            self.eps = 0.26
+            self.minpts = 3
+            return DBSCAN(eps=self.eps, min_samples=self.minpts, metric='precomputed').fit(D)
                     
     def gen_cluster_graph(self, db):
         labels = db.labels_
@@ -541,15 +548,41 @@ class Trusties(ClusterCF):
         
         if debug: g.print_graph()
         return g.page_rank(d=0.85, normalized=True)
+    
+    def calc_trust_distance(self, current_depth_users, trustee, depth=0, visited_users=[]):
+        ''' calculate the distance between trustor and trustee, if trustee not in the WOT of trustor, return -1, using breath first searching 
+        '''
+        if not current_depth_users: return -1
+        
+        depth += 1
+        if trustee in current_depth_users: 
+            return depth
+        else:
+            visited_users.extend(current_depth_users)
+            
+            next_depth_users = []
+            trustees = [self.trust[tn].keys() for tn in current_depth_users if tn in self.trust]
+            for n in trustees:
+                next_depth_users.extend([x for x in n if x not in visited_users])
+            
+            return self.calc_trust_distance(next_depth_users, trustee, depth, visited_users)
         
     def perform(self, train, test):
-        db = self.cluster_users(train)
+        db = self.kmeans(train)
         
         # for test purpose
         if db is None: os.abort()
         
+        core_components = db.components_
         core_indices = db.core_sample_indices_
         labels = db.labels_
+        
+        core_lens = {}
+        for index, i in zip(core_indices, range(len(core_components))):
+            lens = len(py.where(core_components[i] < self.eps)[0])
+            core_lens[index] = lens
+        max_len = float(py.max(core_lens.values()))
+        cor_len = float(len(core_indices))
 
         noises = py.where(labels == -1)[0]
         users = train.keys()
@@ -560,8 +593,8 @@ class Trusties(ClusterCF):
         errors = []
         pred_method = self.config['cluster.pred.method']
         
-        trust_weight = 1.0
-        core_weight = 2.0
+        # trust_weight = 1.0
+        # core_weight = 1.0
         
         # procedure: trusties
         if pred_method == 'wtrust':
@@ -590,7 +623,7 @@ class Trusties(ClusterCF):
                                 v = train[member]
                                 sim = self.similarity(u, v)
                                 # if py.isnan(sim): sim = 0
-                                if py.isnan(sim) or sim <= self.similarity_threashold:continue
+                                if py.isnan(sim) or sim <= self.similarity_threashold: continue
                                 
                                 # I think merging two many weights is not a good thing
                                 # we should only use sim or member weights 
@@ -607,14 +640,16 @@ class Trusties(ClusterCF):
                         weight_cluster = 0 if cs not in prs else (prs[str(cs)] if cs > -1 else 0)
                         wpred.append(1.0 + weight_cluster)
                 
-                    # step 2: prediction from clusters that the trusted neighbors belong to
-                    if not preds and tns:
+                    # step 2: prediction from the clusters that trusted neighbors belong to
+                    if not preds and tns and not False:
+                        
+                        # print user_index in noises # true
                         # find tns' clusters
                         tn_indices = [users.index(tn) for tn in tns if tn in users]
                         tns_cs = {users[index]: labels[index] for index in tn_indices}
                         
                         cls = list(set(tns_cs.values()))
-                        for cl in cls: 
+                        for cl in list(set(labels)): 
                             pred = 0.0
                             # if cl == -1: continue
                             if cl != -1 and cl == cs:continue
@@ -634,29 +669,58 @@ class Trusties(ClusterCF):
                                 for member, index in zip(members, member_indices):
                                     if test_item in train[member]:
                                         rates.append(train[member][test_item])
-                                        trust = trust_weight if member in self.trust[test_user] else 0.0
-                                        weight = core_weight if index in core_indices else 1.0
-                                        weights.append(weight * (1 + trust))                            
+                                        
+                                        dist = self.calc_trust_distance(tns, member)
+                                        if dist > 1: print dist
+                                        trust = 1.0 / dist if dist > 0 else 0.0
+                                        
+                                        # trust2 = trust_weight if member in tns else 0.0
+                                        # if trust!= trust2: print trust, trust2
+                                        # weight = core_weight if index in core_indices else 1.0
+                                        weight = core_lens[index] / max_len if index in core_indices else 0.0
+                                        weights.append((1 + weight) * (1 + trust))                            
                                 if not rates: continue
                                 pred = py.average(rates, weights=weights)
                             
-                            weight_cluster = 0 if str(cl) not in prs else (prs[str(cl)] if cl > -1 else 0)
-                            weight_trust = tns_cs.values().count(cl) / float(len(tns_cs))
-                            wpred.append(weight_trust + weight_cluster)
+                            weight_cluster = 0.0 
+                            if cl == -1: weight_cluster = 1.0
+                            elif str(cl) in prs: weight_cluster = prs[str(cl)]
+                            else: weight_cluster = len(member) / cor_len
+                            
+                            weight_trust = tns_cs.values().count(cl) / float(len(tns_cs)) if cl in cls else 0
+                            w = weight_cluster + weight_trust
+                            
+                            if w == 0:continue
+                            
+                            wpred.append(w)
                             preds.append(pred)
                     
                     # step 3: for users without any trusted neighbors and do not have any predictions from the cluster that he blongs to 
                     if not tns and not preds and not False:
                         for cl in list(set(labels)):
                             # if cl == -1: continue
-                            members = [users[x] for x in py.where(labels == cl)[0]]
-                            rates = [train[member][test_item] for member in members if test_item in train[member]]
+                            members_indices = py.where(labels == cl)[0]
+                            members = [users[x] for x in members_indices]
+                            
+                            rates = []
+                            weights = []
+                            for member, index in zip(members, members_indices):
+                                if test_item in train[member]:
+                                    ''' for these users: core points are much further away from the active users, 
+                                        hence we should put more weights on the border users than the core users, 
+                                        and the (noise) cluster weight should be the most
+                                    '''
+                                    # weight = (1 - core_lens[index] / max_len) if index in core_indices else 1.0
+                                    weight = 0.01 if index in core_indices else 1.0
+                                    rates.append(train[member][test_item])  
+                                    weights.append(weight) 
                             if not rates: continue
-                            pred = py.average(rates)
+                            pred = py.average(rates, weights=weights)
                             preds.append(pred)
-                            # wpred.append(prs[str(cl)] if str(cl) in prs else 1.0)
+                            # wpred.append(1.0 if cl == -1 else len(member) / cor_len)
+                            wpred.append(prs[str(cl)] if str(cl) in prs else 1.0)
                         if not preds: continue
-                        pred = py.average(preds)
+                        pred = py.average(preds, weights=wpred)
                         error = abs(pred - test[test_user][test_item])
                         errors.append(error)
                     else:                                                          
@@ -737,17 +801,166 @@ class KmeansCF(Trusties):
         self.method_id = 'kmeans_cf'
 
     def cluster_users(self, train):
-        D = self.calc_user_distances(train)
-        batch_size = 45
-        db = MiniBatchKMeans(init='k-means++', n_clusters=10, batch_size=batch_size,
-                  n_init=10, max_no_improvement=10, verbose=0).fit(D)
-        labels = db.labels_
-        n_clusters = len(set(labels))
-        print 'Estimated number of clusters: %d' % n_clusters
+        # D = self.calc_user_distances(train)
+        verbose = True
+        n_clusters = 7
+        
+        items = self.items.keys()
+        users = train.keys()
+        
+        X = []
+        for user in users:
+            xi = []
+            for item in items:
+                val = train[user][item] if item in train[user] else 0
+                xi.append(val)
+            X.append(xi)
+        k_means = KMeans(init='k-means++', n_clusters=n_clusters, n_init=10)
+        k_means.fit(X)
+        k_means_labels = k_means.labels_
+        k_means_cluster_centers = k_means.cluster_centers_
+        k_means_labels_unique = py.unique(k_means_labels)
+        
+        if verbose:
+            print 'number of cluster centers =', k_means_cluster_centers
+            print 'number of lables =', k_means_labels_unique
+            print 'stop here'
+        
+    def kmeans(self, train, n_clusters):
+        ''' A good reference: http://home.dei.polimi.it/matteucc/Clustering/tutorial_html/kmeans.html
+        '''
+        last_errors = 0
+        tol = 0.0000001
+        
+        # items = self.items.keys()
+        users = train.keys()
+        
+        # random.seed(100)
+        
+        # initial k-means clusters
+        centroids_indices = random.sample(range(len(users)), n_clusters)
+        centroids_users = [users[index] for index in centroids_indices]
+        centroids = {index: train[user] for index, user in zip(range(len(centroids_users)), centroids_users)}
+        clusters = {}
+        
+        iteration = 100
+        for i in range(iteration):
+            clustered_users = []
+            clusters = {}
+            
+            # cluster users
+            for user in users:
+                if user in clustered_users: continue
+                
+                min_dist = py.Infinity
+                cluster_index = -1
+                for c_index, centroid in centroids.viewitems():
+                    dist = self.similarity(train[user], centroid) if self.similarity_method == 'euclidean' else 1 - self.similarity(train[user], centroid)
+                    # u, v = self.pairs(train[user], centroid)
+                    # we need to divide by len(u) in order to compare distances from different dimentional spaces
+                    # dist = distance.euclidean(u, v) / len(u) if len(u) > 0 else py.Infinity 
+                    if dist < min_dist:
+                        min_dist = dist
+                        cluster_index = c_index
+                # if cluster_index == -1: this user is not able to be clustered, usually due to 
+                # that this user only rated one item and this item is only rated by this user or few users,
+                # which make this user is not able to compute distance with others
+                cluster_members = clusters[cluster_index] if cluster_index in clusters else []
+                cluster_members.append(user)
+                clusters[cluster_index] = cluster_members
+                
+                clustered_users.append(user)
+            
+            # recompute cluster centroids
+            new_centroids = {}
+            for cluster_index, cluster_members in clusters.viewitems():
+                if cluster_index == -1: continue
+                
+                item_ratings = {}
+                for cluster_member in cluster_members:
+                    for item in train[cluster_member]:
+                        ratings = item_ratings[item] if item in item_ratings else []
+                        ratings.append(train[cluster_member][item])
+                        item_ratings[item] = ratings
+                item_means = {item: py.mean(ratings) for item, ratings in item_ratings.items()}
+                new_centroids[cluster_index] = item_means
+            
+            # compute the errors of centroids
+            errors = 0.0
+            for index, centroid in centroids.viewitems():
+                if index not in new_centroids: 
+                    # print 'centroids cannot be updated'
+                    # new_centroids[index] = centroids[index]
+                    return 
+                new_centroid = new_centroids[index]
+                error = [(centroid[item] - new_centroid[item]) ** 2 for item in new_centroid if item in centroid ]
+                errors += sum(error)
+            
+            if verbose: 
+                print 'iteration', (i + 1),
+                print 'errors =', errors
+            
+            if (last_errors - errors) ** 2 < tol or i >= iteration - 1:
+                break
+            else:
+                last_errors = errors
+                centroids = new_centroids
+        if verbose:
+            print 'centroids:', centroids
+        
+        return centroids, clusters
     
     def perform(self, train, test):
-        # self.cluster_users(train)
-        pass
+        n_clusters = int(self.config['kmeans.clusters'])
+        while(True):
+            result = self.kmeans(train, n_clusters=n_clusters)
+            if result is not None:
+                centroids, clusters = result
+                break
+            else:
+                print 're-try different initial centroids'
+        
+        errors = []
+        pred_method = self.config['cluster.pred.method']
+        for test_user in test:
+            # identity the clusters of this test_user
+            cluster = -1
+            members = []
+            for cluster_index, cluster_members in clusters.viewitems():
+                if test_user in cluster_members:
+                    cluster = cluster_index
+                    members = [member for member in cluster_members if member != test_user]
+                    break
+            if cluster == -1:
+                if verbose: 
+                    print 'cannot identify the cluster for user:', test_user
+                continue
+            
+            for test_item in test[test_user]:
+                
+                if pred_method == 'mean':
+                    rates = [train[member][test_item] for member in members if test_item in train[member]]
+                    if not rates: continue
+                    pred = py.mean(rates)
+                
+                elif pred_method == 'wcf':
+                    rates = []
+                    weights = []
+                    for member in members:
+                        if test_item in train[member]:
+                            u = train[test_user]
+                            v = train[member]
+                            weight = self.similarity(u, v)
+                            
+                            if py.isnan(weight) or weight <= self.similarity_threashold: continue
+                            
+                            rates.append(train[member][test_item])
+                            weights.append(weight)                            
+                    if not rates: continue
+                    pred = py.average(rates, weights=weights)
+                
+                errors.append(abs(pred - test[test_user][test_item]))
+        self.errors = errors
     
 def main():
     config = load_config()
@@ -758,6 +971,8 @@ def main():
         ClassicCF().execute()
     elif run_method == 'trusties':
         Trusties().execute()
+    elif run_method == 'kmeans':
+        KmeansCF().execute()
     else:
         raise ValueError('invalid method to run')
 
