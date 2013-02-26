@@ -133,7 +133,10 @@ class AbstractCF(object):
         # import training rating and trust data
         ds = Dataset()
         self.train, self.items = ds.load_ratings(self.dataset_directory + self.rating_set)
-        self.trust = ds.load_trust(self.dataset_directory + self.trust_set)
+        
+        trust_file = self.dataset_directory + self.trust_set
+        if os.path.exists(trust_file): 
+            self.trust = ds.load_trust(trust_file)
         
         # prepare test set
         self.test = ds.load_ratings(self.dataset_directory + self.test_set)[0]  if self.validate_method == cross_validation else None
@@ -196,7 +199,7 @@ class AbstractCF(object):
             return 1 - distance.correlation(u, v)
         elif self.similarity_method == 'wpcc':
             n = len(u)
-            r = 10.0
+            r = float(self.config['similarity.wpcc.gamma'])
             w = n / r if n <= r else 1.0
             return w * (1 - distance.correlation(u, v))
         elif self.similarity_method == 'cos':

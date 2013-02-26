@@ -16,14 +16,17 @@ class Dataset(object):
                 line = line.strip()
                 if not line: continue
                 
-                user, item, rating = line.split()
+                data_line = line.split()
+                user = data_line[0]
+                item = data_line[1]
+                rating = float(data_line[2])
                 
                 item_ratings = user_data[user] if user in user_data else {}
-                item_ratings[item] = float(rating)
+                item_ratings[item] = rating
                 user_data[user] = item_ratings
                 
                 user_ratings = item_data[item] if item in item_data else {}
-                user_ratings[user] = float(rating)
+                user_ratings[user] = rating
                 item_data[item] = user_ratings
                 
                 self.count += 1
