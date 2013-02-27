@@ -34,6 +34,44 @@ def load_config():
                 config[params[0]] = params[1]
     return config
 
+"""
+@INPUT:
+    R     : a matrix to be factorized, dimension N x M
+    U     : an initial matrix of dimension N x K
+    V     : an initial matrix of dimension K x M
+    K     : the number of latent features
+    steps : the maximum number of steps to perform the optimisation
+    alpha : the learning rate
+    beta  : the regularization parameter
+@OUTPUT:
+    the final matrices P and Q
+"""
+def matrix_factorization(R, U, V, K, steps=5000, lrate=0.0002, lam=0.02, tol=0.0001):
+    for step in xrange(steps):
+        e = 0
+        N = len(R)
+        M = len(R[0])
+        for i in xrange(N):
+            for j in xrange(M):
+                if R[i][j] > 0:
+                    eij = R[i][j] - py.dot(U[i, :], V[:, j])
+                    for k in xrange(K):
+                        newPik = U[i][k] + lrate * (2 * eij * V[k][j] - lam * U[i][k])
+                        newQkj = V[k][j] + lrate * (2 * eij * U[i][k] - lam * V[k][j])
+                        
+                        U[i][k] = newPik
+                        V[k][j] = newQkj
+                
+                e = e + pow(R[i][j] - py.dot(U[i, :], V[:, j]), 2)    
+        
+        e += 0.5 * lam * sum([U[i][k] ** 2 for i in range(N) for k in range(K)])
+        e += 0.5 * lam * sum([V[k][j] ** 2 for k in range(K) for j in range(M)])
+        
+        if e < tol: break
+        else:
+            print 'current progress =', (step + 1), ', errors =', e
+    return U, V
+
 class Prediction(object):
     def __init__(self, user, item, pred, truth):
         self.user = user
@@ -1098,10 +1136,83 @@ class KmeansCF(Trusties):
                 errors.append(abs(pred - test[test_user][test_item]))
         self.errors = errors
 
+class MF(AbstractCF):
+    
+    def __init__(self):
+        self.method_id = 'Matrix Factorization'
+    
+    def training(self, train):
+        users = train.keys()
+        items = self.items.keys()
+        features = 50 
+        lrate = 0.005
+        lam = 0.02
+        steps = 5000
+        tol = 0.0001
+        
+        rows = len(users)
+        cols = len(items)
+        
+        R = []  # rating matrix
+        for i in range(rows):
+            user = users[i]
+            r = []
+            for j in range(cols):
+                item = items[j]
+                r.append(train[user][item] if item in train[user] else 0)
+            R.append(r)
+            
+        R = py.array(R)
+        
+        U = py.random.rand(rows, features)
+        V = py.random.rand(features, cols)
+        
+        nU, nV = matrix_factorization(R, U, V, features,
+                                      steps=steps, lrate=lrate,
+                                      lam=lam, tol=tol)
+        return py.dot(nU, nV)
+    
+    def cross_over_test_items(self, train, test):
+        R = self.training(train)
+        
+        users = train.keys()
+        items = self.items.keys()
+        
+        count = 0
+        # {test_user: [prediction object]}
+        user_preds = {}
+        
+        for test_user in test.viewkeys():
+            count += 1
+            if count % self.peek_interval == 0:
+                print 'current progress =', count, 'out of', len(test)
+            
+            a = train[test_user] if test_user in train else {}
+            
+            # predict test item's rating
+            for test_item in self.test_items:
+                if test_item in a: continue
+                
+                # truth
+                truth = test[test_user][test_item] if test_item in test[test_user] else 0.0
+                
+                # prediction
+                row = users.index(test_user)
+                col = items.index(test_item)
+                pred = R[row][col]
+                
+                prediction = Prediction(test_user, test_item, pred, truth)
+                predictions = user_preds[test_user] if test_user in user_preds else []
+                predictions.append(prediction)
+                user_preds[test_user] = predictions
+                
+        self.user_preds = user_preds 
+        self.errors = []
+
 class SlopeOne(AbstractCF):
     
     def __init__(self):
-        self.method_id='SlopeOne'
+        self.method_id = 'Slope One'
     
     def perform(self, train, test):
         '''http://www.serpentine.com/blog/2006/12/12/collaborative-filtering-made-easy/'''
@@ -1118,14 +1229,38 @@ def main():
         Trusties().execute()
     elif run_method == 'kmeans':
         KmeansCF().execute()
+    elif run_method == 'mf':
+        MF().execute()
     else:
         raise ValueError('invalid method to run')
 
-def test():
+def test_io():
     lp = [0.5, 0.3, 0.6]
     pickle.dump(lp, open('list.txt', 'wb'))
     lp = pickle.load(open('list.txt', 'rb'))
     print lp
     
+def test_mf():
+    R = [[5, 3, 0, 1],
+         [4, 0, 0, 1],
+         [1, 1, 0, 5],
+         [1, 0, 0, 4],
+         [0, 1, 5, 4], ]
+
+    R = py.array(R)
+
+    N = len(R)
+    M = len(R[0])
+    K = 2
+
+    P = py.random.rand(N, K)
+    Q = py.random.rand(K, M)
+
+    nP, nQ = matrix_factorization(R, P, Q, K)
+    nR = py.dot(nP, nQ)
+    
+    print nR
+    
 if __name__ == '__main__':
     main()
+    # test_mf()
