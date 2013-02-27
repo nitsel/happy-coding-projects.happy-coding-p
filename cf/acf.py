@@ -34,6 +34,13 @@ def load_config():
                 config[params[0]] = params[1]
     return config
 
+class Prediction(object):
+    def __init__(self, user, item, pred, truth):
+        self.user = user
+        self.item = item
+        self.pred = pred
+        self.truth = truth
+
 class AbstractCF(object):
     '''
     classdocs
@@ -139,7 +146,9 @@ class AbstractCF(object):
             self.trust = ds.load_trust(trust_file)
         
         # prepare test set
-        self.test = ds.load_ratings(self.dataset_directory + self.test_set)[0]  if self.validate_method == cross_validation else None
+        test_data = ds.load_ratings(self.dataset_directory + self.test_set)  if self.validate_method == cross_validation else None
+        self.test = test_data[0]  if test_data is not None else None
+        self.test_items = test_data[1]  if test_data is not None else None
         self.test = self.prep_test(self.train, self.test)
         
         # execute recommendations
@@ -150,7 +159,8 @@ class AbstractCF(object):
     
     def perform(self, train, test):
         if self.validate_method == cross_validation:
-            self.cross_over(train, test)
+            # self.cross_over(train, test)
+            self.cross_over_test_items(train, test)
         elif self.validate_method == leave_one_out:
             self.leave_one_out(train, test)
         else:
@@ -164,21 +174,66 @@ class AbstractCF(object):
     
     def collect_results(self):
         # print performance
-        MAE = py.mean(self.errors)
-        mae = 'MAE = {0:.6f}, '.format(MAE)
-        pred_test = len(self.errors)
-        total_test = sum([len(value) for value in self.test.viewvalues() ])
-        RC = float(pred_test) / total_test * 100
-        rc = 'RC = {0:d}/{1:d} = {2:2.2f}%, '.format(pred_test, total_test, RC)
-        RMSE = math.sqrt(py.mean([e ** 2 for e in self.errors]))
-        rmse = 'RMSE = {0:.6f}'.format(RMSE)
         
-        print mae + rc + rmse + ', ' + self.dataset_directory + self.rating_set
-        
-        if self.config['write.results'] == on:
-            results = '{0},{1},{2:.6f},{3:2.2f}%,{4:.6f},{5}'\
-                    .format(self.method_id, self.dataset_mode, MAE, RC, RMSE, self.dataset_directory + self.rating_set)
-            logs.debug(results)
+        if self.errors:
+            MAE = py.mean(self.errors)
+            mae = 'MAE = {0:.6f}, '.format(MAE)
+            pred_test = len(self.errors)
+            total_test = sum([len(value) for value in self.test.viewvalues() ])
+            RC = float(pred_test) / total_test * 100
+            rc = 'RC = {0:d}/{1:d} = {2:2.2f}%, '.format(pred_test, total_test, RC)
+            RMSE = math.sqrt(py.mean([e ** 2 for e in self.errors]))
+            rmse = 'RMSE = {0:.6f}'.format(RMSE)
+            
+            print mae + rc + rmse + ', ' + self.dataset_directory + self.rating_set
+            
+            if self.config['write.results'] == on:
+                results = '{0},{1},{2:.6f},{3:2.2f}%,{4:.6f},{5}'\
+                        .format(self.method_id, self.dataset_mode, MAE, RC, RMSE, self.dataset_directory + self.rating_set)
+                logs.debug(results)
+        elif self.user_preds:
+            precisions = []
+            nDCGs = []
+            top_n = 5
+            covered = 0
+            for preds in self.user_preds.viewvalues():
+                sorted_preds = sorted(preds, key=lambda x: x.pred, reverse=True)
+                sorted_truths = sorted(preds, key=lambda x: x.truth, reverse=True)
+                
+                predicted = [pred.truth for pred in preds if pred.truth > 0]
+                covered += len(predicted)
+                
+                list_rec = sorted_preds[:top_n] if len(sorted_preds) > top_n else sorted_preds
+                list_truth = sorted_truths[:top_n] if len(sorted_truths) > top_n else sorted_truths
+                 
+                tp = 0
+                n_rec = len(list_rec)
+                
+                DCG = 0
+                for i in range(n_rec):
+                    truth = list_rec[i].truth
+                    if truth > 0:
+                        tp += 1
+                        rank = i + 1
+                        DCG += 1.0 / math.log(rank + 1, 2)
+                
+                iDCG = 0
+                for i in range(len(list_truth)):
+                    truth = list_truth[i].truth
+                    rank = i + 1
+                    iDCG += (1.0 / math.log(rank + 1, 2) if truth > 0 else 0)
+                
+                nDCG = DCG / iDCG
+                nDCGs.append(nDCG)
+                        
+                precision = float(tp) / n_rec
+                precisions.append(precision)
+            
+            print 'P@{0:d} = {1:f}'.format(top_n, py.average(precisions))
+            print 'nDCG@{0:d} = {1:f}'.format(top_n, py.average(nDCGs))
+            
+            total_test = sum([len(value) for value in self.test.viewvalues() ])
+            print 'Coverage = {0:2.2f}%'.format(float(covered) / total_test * 100)
     
     def pairs(self, a, b):
         vas = []
@@ -291,6 +346,84 @@ class ClassicCF(AbstractCF):
                 errors.append(abs(truth - pred))
                 
         self.errors = errors 
+        
+    def cross_over_test_items(self, train, test):
+        # {test_user, {train_user, similarity}}
+        sim_dist = {}
+        # {train_user, mu}
+        mu_dist = {}
+        
+        count = 0
+        # {test_user: [prediction object]}
+        user_preds = {}
+        
+        for test_user in test.viewkeys():
+            count += 1
+            if count % self.peek_interval == 0:
+                print 'current progress =', count, 'out of', len(test)
+            
+            a = train[test_user] if test_user in train else {}
+            
+            # predict test item's rating
+            for test_item in self.test_items:
+                if test_item in a: continue
+                
+                truth = test[test_user][test_item] if test_item in test[test_user] else 0.0
+                
+                mu_a = 0.0
+                if self.prediction_method == 'resnick_formula':
+                    if not a: continue
+                    mu_a = py.mean(a.values(), dtype=py.float64)
+                
+                # find the ratings of similar users and their weights
+                votes = []
+                weights = []
+                for user in train.viewkeys():
+                    if test_item not in train[user]: continue
+                    if test_user == user: continue
+                    # find or compute user similarity
+                    user_sims = sim_dist[test_user] if test_user in sim_dist else {}
+                    
+                    if not user_sims or user not in user_sims: 
+                        b = train[user]
+                        
+                        # weight
+                        weight = self.similarity(a, b)
+                        user_sims[user] = weight
+                        sim_dist[test_user] = user_sims
+                        
+                        # mu_b
+                        mu_b = py.mean(b.values(), dtype=py.float64) if self.prediction_method == resnick_formula else 0.0
+                        mu_dist[user] = mu_b
+                    else:
+                        weight = user_sims[user]
+                        mu_b = mu_dist[user]
+                    
+                    if py.isnan(weight) or weight <= self.similarity_threashold: continue
+                    
+                    # print user, test_item
+                    votes.append(train[user][test_item] - mu_b)
+                    weights.append(weight)
+                
+                if not votes:continue
+                
+                # k-NN methods: find top-k most similar users according to their weights
+                if self.knn > 0:
+                    sorted_ws = sorted(enumerate(weights), reverse=True, key=operator.itemgetter(1))[:self.knn]
+                    indeces = [item[0] for item in sorted_ws]
+                    weights = [weights[index] for index in indeces]
+                    votes = [votes[index] for index in indeces]
+                
+                # prediction
+                pred = mu_a + py.average(votes, weights=weights)
+                
+                prediction = Prediction(test_user, test_item, pred, truth)
+                predictions = user_preds[test_user] if test_user in user_preds else []
+                predictions.append(prediction)
+                user_preds[test_user] = predictions
+                
+        self.user_preds = user_preds 
+        self.errors = []
     
     def leave_one_out(self, train, test):
         errors = []
@@ -964,6 +1097,15 @@ class KmeansCF(Trusties):
                 
                 errors.append(abs(pred - test[test_user][test_item]))
         self.errors = errors
+
+class SlopeOne(AbstractCF):
+    
+    def __init__(self):
+        self.method_id='SlopeOne'
+    
+    def perform(self, train, test):
+        '''http://www.serpentine.com/blog/2006/12/12/collaborative-filtering-made-easy/'''
+        pass
     
 def main():
     config = load_config()
