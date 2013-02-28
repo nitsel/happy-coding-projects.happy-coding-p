@@ -49,7 +49,8 @@ class Graph(object):
         print sorted({edge.identity: edge.weight for edge in self.edges}.items(), key=lambda x:x[0])
     
     def add_edge(self, edge):
-        if edge not in self.edges: self.edges.append(edge)
+        if edge not in self.edges: 
+            self.edges.append(edge)
         source = edge.source
         target = edge.target
         
