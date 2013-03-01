@@ -8,6 +8,7 @@ import numpy as py
 import logging as logs
 import operator
 from scipy.spatial import distance
+from scipy import stats
 from data import Dataset
 from sklearn.cluster import DBSCAN
 from graph import Graph, Vertex, Edge
@@ -232,6 +233,7 @@ class AbstractCF(object):
         results = ''
         if self.user_preds:
             precisions = []
+            recalls = []
             nDCGs = []
             APs = []
             RRs = []
@@ -266,18 +268,19 @@ class AbstractCF(object):
                         rank = i + 1
                         DCG += 1.0 / math.log(rank + 1, 2)
                         
+                        precision_at_k = float(tp) / rank
+                        precisions_at_k.append(precision_at_k)
+                        
                         if not first_relevant:
                             RR = 1.0 / rank
                             first_relevant = True
                             
-                    precision_at_k = float(tp) / (i + 1)
-                    precisions_at_k.append(precision_at_k)
-                
-                precisions.append(precision_at_k)
+                precisions.append(float(tp) / n_rec)
+                recalls.append(float(tp) / len(es))
                 RRs.append(RR)
                 
                 # average prediction
-                AP = py.mean(precisions_at_k)
+                AP = py.mean(precisions_at_k) if precisions_at_k else 0
                 APs.append(AP)
                 
                 iDCG = 0
@@ -293,38 +296,41 @@ class AbstractCF(object):
             self.errors = errors
             
             Precision_at_n = py.mean(precisions)
+            Recall_at_n = py.mean(recalls)
+            F1_at_n = stats.hmean([Precision_at_n, Recall_at_n])
             nDCG_at_n = py.mean(nDCGs)
             MAP_at_n = py.mean(APs)
             MRR_at_n = py.mean(RRs)
             RC = float(covered) / total_test * 100
             
             print 'P@{0:d} = {1:f},'.format(top_n, Precision_at_n),
+            print 'R@{0:d} = {1:f},'.format(top_n, Recall_at_n),
+            print 'F1@{0:d} = {1:f},'.format(top_n, F1_at_n),
             print 'nDCG@{0:d} = {1:f},'.format(top_n, nDCG_at_n),
             print 'MAP@{0:d} = {1:f},'.format(top_n, MAP_at_n),
             print 'MRR@{0:d} = {1:f},'.format(top_n, MRR_at_n),
             print 'RC = {0:2.2f}%'.format(RC)
             
-            if write_out:
-                results = '{0},{1},{2:.6f},{3:.6f},{4:.6f},{5:.6f}'\
-                        .format(self.method_id, self.dataset_mode, Precision_at_n, nDCG_at_n, MAP_at_n, MRR_at_n)
-                logs.debug(results)
+            results = '{0},{1},{2:.6f},{3:.6f},{4:.6f},{5:.6f},{6:.6f},{7:.6f}'\
+                .format(self.method_id, self.dataset_mode, Precision_at_n, Recall_at_n, F1_at_n, nDCG_at_n, MAP_at_n, MRR_at_n)
                 
         if self.errors:
             MAE = py.mean(self.errors)
             mae = 'MAE = {0:.6f}, '.format(MAE)
            
+            RMSE = math.sqrt(py.mean([e ** 2 for e in self.errors]))
+            rmse = 'RMSE = {0:.6f},'.format(RMSE)
+            
             pred_test = len(self.errors)
             RC = float(pred_test) / total_test * 100
             rc = 'RC = {0:2.2f}%, '.format(RC)
             
-            RMSE = math.sqrt(py.mean([e ** 2 for e in self.errors]))
-            rmse = 'RMSE = {0:.6f}'.format(RMSE)
-            
-            print mae + rmse + rc + ', ' + self.data_file
-            results += ',{0:.6f},{1:.6f},{2:2.2f}%'.format(MAE, RC, RMSE)
+            print mae + rmse + rc + self.data_file
+            results += ',{0:.6f},{1:.6f},{2:2.2f}%'.format(MAE, RMSE, RC)
         
         results += (',' if results else '') + self.data_file
-        if write_out:  logs.debug(results)
+        if write_out:  
+            logs.debug(results)
     
     def pairs(self, a, b):
         vas = []
@@ -499,10 +505,10 @@ class ClassicCF(AbstractCF):
                 if not votes:continue
                 
                 # k-NN methods: find top-k most similar users according to their weights
-                if self.knn > 0:
+                if self.knn > 0 and len(weights) > self.knn:
                     sorted_ws = sorted(enumerate(weights), reverse=True, key=operator.itemgetter(1))[:self.knn]
                     indeces = [item[0] for item in sorted_ws]
-                    weights = [weights[index] for index in indeces]
+                    weights = [item[1] for item in sorted_ws]
                     votes = [votes[index] for index in indeces]
                 
                 # prediction
