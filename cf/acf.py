@@ -229,7 +229,7 @@ class AbstractCF(object):
         write_out = self.config['write.results'] == on
         
         total_test = sum([len(value) for value in self.test.viewvalues() ])
-        
+        results = ''
         if self.user_preds:
             precisions = []
             nDCGs = []
@@ -305,8 +305,8 @@ class AbstractCF(object):
             print 'RC = {0:2.2f}%'.format(RC)
             
             if write_out:
-                results = '{0},{1},{2:.6f},{3:.6f},{4:.6f},{5:.6f},{6:2.2f}%,{7}'\
-                        .format(self.method_id, self.dataset_mode, Precision_at_n, nDCG_at_n, MAP_at_n, MRR_at_n, RC, self.data_file)
+                results = '{0},{1},{2:.6f},{3:.6f},{4:.6f},{5:.6f}'\
+                        .format(self.method_id, self.dataset_mode, Precision_at_n, nDCG_at_n, MAP_at_n, MRR_at_n)
                 logs.debug(results)
                 
         if self.errors:
@@ -321,11 +321,10 @@ class AbstractCF(object):
             rmse = 'RMSE = {0:.6f}'.format(RMSE)
             
             print mae + rmse + rc + ', ' + self.data_file
-            
-            if write_out:
-                results = '{0},{1},{2:.6f},{3:2.2f}%,{4:.6f},{5}'\
-                        .format(self.method_id, self.dataset_mode, MAE, RC, RMSE, self.data_file)
-                logs.debug(results)
+            results += ',{0:.6f},{1:.6f},{2:2.2f}%'.format(MAE, RC, RMSE)
+        
+        results += (',' if results else '') + self.data_file
+        if write_out:  logs.debug(results)
     
     def pairs(self, a, b):
         vas = []
