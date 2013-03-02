@@ -92,11 +92,11 @@ class AbstractCF(object):
     debug_file = 'results.csv'
     peek_interval = 20
     config = {}
+    errors = []
+    user_preds = {}
 
     def __init__(self):
         self.method_id = 'abstract_cf'
-        self.errors = []
-        self.user_preds = {}
     
     def config_cf(self):
         if not self.config: self.config = load_config()
