@@ -240,7 +240,7 @@ class AbstractCF(object):
             errors = []
             top_n = int(self.config['top.n'])
             covered = 0
-            for preds in self.user_preds.viewvalues():
+            for test_user, preds in self.user_preds.viewitems():
                 # complete ranked (by prediction) and ideal list
                 sorted_preds = sorted(preds, key=lambda x: x.pred, reverse=True)
                 sorted_truths = sorted(preds, key=lambda x: x.truth, reverse=True)
@@ -276,7 +276,7 @@ class AbstractCF(object):
                             first_relevant = True
                             
                 precisions.append(float(tp) / n_rec)
-                recalls.append(float(tp) / len(es))
+                recalls.append(float(tp) / len(self.test[test_user]))
                 RRs.append(RR)
                 
                 # average prediction
