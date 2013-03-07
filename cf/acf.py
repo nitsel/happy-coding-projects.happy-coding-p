@@ -89,11 +89,12 @@ class AbstractCF(object):
     '''
     rating_set = "ratings.txt"
     trust_set = 'trust.txt'
-    debug_file = 'results.csv'
+    debug_file = 'results.txt'  # results.csv used for formal results
     peek_interval = 20
     config = {}
     errors = []
     user_preds = {}
+    results = ''
 
     def __init__(self):
         self.method_id = 'abstract_cf'
@@ -157,7 +158,6 @@ class AbstractCF(object):
                 return {user:item_ratings for user, item_ratings in test.items() if user not in train or len(train[user]) > heavy_len}
             else:
                 raise ValueError('invalid test data set mode')
-            pass
         
     def execute(self):
         self.config_cf()
@@ -180,7 +180,9 @@ class AbstractCF(object):
             for i in range(int(self.config['kmeans.init'])):
                 self.single_run()
             
-    def single_run(self):    
+    def single_run(self):
+        self.results = '{0},{1}'.format(self.method_id, self.dataset_mode)
+        
         # import training rating and trust data
         ds = Dataset()
         self.data_file = self.dataset_directory + self.rating_set
@@ -230,7 +232,6 @@ class AbstractCF(object):
         write_out = self.config['write.results'] == on
         
         total_test = sum([len(value) for value in self.test.viewvalues() ])
-        results = ''
         if self.user_preds:
             precisions = []
             recalls = []
@@ -250,19 +251,19 @@ class AbstractCF(object):
                 errors.extend(es)
                 covered += len(es)
                 
-                # at position N
-                list_rec = sorted_preds[:top_n] if len(sorted_preds) > top_n else sorted_preds
-                list_truth = sorted_truths[:top_n] if len(sorted_truths) > top_n else sorted_truths
+                # cut-off at position N
+                list_recom = sorted_preds[:top_n]
+                list_truth = sorted_truths[:top_n]
                 
-                tp = 0
-                n_rec = len(list_rec)
-                DCG = 0
+                n_recom = len(list_recom)
                 precisions_at_k = []
+                tp = 0
+                DCG = 0
                 
                 first_relevant = False
                 RR = 0  # Reciprocal Rank
-                for i in range(n_rec):
-                    truth = list_rec[i].truth
+                for i in range(n_recom):
+                    truth = list_recom[i].truth
                     if truth > 0:  # rated as a hit item
                         tp += 1
                         rank = i + 1
@@ -275,7 +276,7 @@ class AbstractCF(object):
                             RR = 1.0 / rank
                             first_relevant = True
                             
-                precisions.append(float(tp) / n_rec)
+                precisions.append(float(tp) / n_recom)
                 recalls.append(float(tp) / len(self.test[test_user]))
                 RRs.append(RR)
                 
@@ -306,31 +307,30 @@ class AbstractCF(object):
             print 'P@{0:d} = {1:f},'.format(top_n, Precision_at_n),
             print 'R@{0:d} = {1:f},'.format(top_n, Recall_at_n),
             print 'F1@{0:d} = {1:f},'.format(top_n, F1_at_n),
-            print 'nDCG@{0:d} = {1:f},'.format(top_n, nDCG_at_n),
+            print 'NDCG@{0:d} = {1:f},'.format(top_n, nDCG_at_n),
             print 'MAP@{0:d} = {1:f},'.format(top_n, MAP_at_n),
             print 'MRR@{0:d} = {1:f},'.format(top_n, MRR_at_n),
             print 'RC = {0:2.2f}%'.format(RC)
             
-            results = '{0},{1},{2:.6f},{3:.6f},{4:.6f},{5:.6f},{6:.6f},{7:.6f}'\
-                .format(self.method_id, self.dataset_mode, Precision_at_n, Recall_at_n, F1_at_n, nDCG_at_n, MAP_at_n, MRR_at_n)
+            self.results += ',{0:.6f},{1:.6f},{2:.6f},{3:.6f},{4:.6f},{5:.6f}'\
+                .format(Precision_at_n, Recall_at_n, F1_at_n, nDCG_at_n, MAP_at_n, MRR_at_n)
                 
         if self.errors:
             MAE = py.mean(self.errors)
             mae = 'MAE = {0:.6f}, '.format(MAE)
            
             RMSE = math.sqrt(py.mean([e ** 2 for e in self.errors]))
-            rmse = 'RMSE = {0:.6f},'.format(RMSE)
+            rmse = 'RMSE = {0:.6f}, '.format(RMSE)
             
             pred_test = len(self.errors)
             RC = float(pred_test) / total_test * 100
             rc = 'RC = {0:2.2f}%, '.format(RC)
             
             print mae + rmse + rc + self.data_file
-            results += ',{0:.6f},{1:.6f},{2:2.2f}%'.format(MAE, RMSE, RC)
+            self.results += ',{0:.6f},{1:.6f},{2:2.2f}%'.format(MAE, RMSE, RC)
         
-        results += (',' if results else '') + self.data_file
-        if write_out:  
-            logs.debug(results)
+        self.results += ',' + self.data_file
+        if write_out: logs.debug(self.results)
     
     def pairs(self, a, b):
         vas = []
@@ -382,9 +382,6 @@ class ClassicCF(AbstractCF):
             count += 1
             if count % self.peek_interval == 0:
                 print 'current progress =', count, 'out of', len(test)
-            
-            # trust information
-            # if test_user in self.trust:continue
             
             # predict test item's rating
             for test_item in test[test_user]:
@@ -1031,7 +1028,7 @@ class Trusties(ClusterCF):
 
 class KmeansCF(AbstractCF):
     def __init__(self):
-        self.method_id = 'kmeans_cf'
+        self.method_id = 'Kmeans CF'
 
     def cluster_users(self, train):
         # D = self.calc_user_distances(train)
@@ -1057,11 +1054,12 @@ class KmeansCF(AbstractCF):
         if verbose:
             print 'number of cluster centers =', k_means_cluster_centers
             print 'number of lables =', k_means_labels_unique
-            print 'stop here'
+        print 'Done!'
         
     def kmeans(self, train, n_clusters):
         ''' A good reference: http://home.dei.polimi.it/matteucc/Clustering/tutorial_html/kmeans.html
         '''
+        print 'Start to cluster users ...',
         last_errors = 0
         tol = 0.0000001
         
@@ -1074,7 +1072,6 @@ class KmeansCF(AbstractCF):
         centroids_indices = random.sample(range(len(users)), n_clusters)
         centroids_users = [users[index] for index in centroids_indices]
         centroids = {index: train[user] for index, user in zip(range(len(centroids_users)), centroids_users)}
-        clusters = {}
         
         iteration = 50
         for i in range(iteration):
@@ -1139,7 +1136,7 @@ class KmeansCF(AbstractCF):
                 last_errors = errors
                 centroids = new_centroids
         # if verbose: print 'centroids:', centroids
-        
+        print 'Done!'
         return centroids, clusters
     
     def cross_over_top_n(self, train, test):
@@ -1151,7 +1148,6 @@ class KmeansCF(AbstractCF):
                 break
             else:
                 print 're-try different initial centroids'
-        print 'finished clustering'
         
         sim_dist = {}
         mu_dist = {}
@@ -1258,6 +1254,7 @@ class KmeansCF(AbstractCF):
         
         errors = []
         pred_method = self.config['cluster.pred.method']
+        self.results += ',' + pred_method
         for test_user in test:
             # identity the clusters of this test_user
             cluster = -1
@@ -1297,8 +1294,103 @@ class KmeansCF(AbstractCF):
                 
                 errors.append(abs(pred - test[test_user][test_item]))
         self.errors = errors
-
+        
+class KmeansCF_train_heavy(KmeansCF):
+    ''' This class is to train KmeansCF method using non-cold users to train the model'''
+    
+    def __init__(self):
+        self.method_id = 'KmeansCF non-Cold'
+    
+    def prep_test(self, train, test=None):
+        cold_len = 5
+        heavy_len = 10
+        if test is not None:
+            self.train2 = train
+            self.train = {user:item_ratings for user, item_ratings in train.items() if len(train[user]) >= cold_len}
+            
+            if self.dataset_mode == 'all':
+                return self.test
+            elif self.dataset_mode == 'cold_users':
+                return {user:item_ratings for user, item_ratings in test.items() if (user not in train or len(train[user]) < cold_len) and user in self.trust}
+            elif self.dataset_mode == 'heavy_users':
+                return {user:item_ratings for user, item_ratings in test.items() if user not in train or len(train[user]) > heavy_len}
+            else:
+                raise ValueError('invalid test data set mode')
+            
+    def cross_over(self, train, test):
+        n_clusters = int(self.config['kmeans.clusters'])
+        while(True):
+            result = self.kmeans(train, n_clusters=n_clusters)
+            if result is not None:
+                centroids, clusters = result
+                break
+            else:
+                print 're-try different initial centroids'
+        
+        errors = []
+        pred_method = self.config['cluster.pred.method']
+        self.results += ',' + pred_method
+        for test_user in test:
+            # identity the clusters of this test_user
+            cluster = -1
+            u = self.train2[test_user] if test_user in self.train2 else {}
+            if not u: continue
+            
+            max = -10
+            c_index = -1
+            for index, centroid in centroids.viewitems():
+                sim = self.similarity(u, centroid)
+                if py.isnan(sim): continue
+                if max < sim:
+                    max = sim
+                    c_index = index
+            
+            if c_index == -1:
+                if verbose: 
+                    print 'cannot identify the cluster for user:', test_user
+                continue
+            else:
+                c_members = clusters[c_index]
+                members = [member for member in c_members if member != test_user]
+            
+            for test_item in test[test_user]:
+                
+                if pred_method == 'mean':
+                    rates = [train[member][test_item] for member in members if test_item in train[member]]
+                    if not rates: continue
+                    pred = py.mean(rates)
+                
+                elif pred_method == 'wcf':
+                    rates = []
+                    weights = []
+                    for member in members:
+                        if test_item in train[member]:
+                            u = train[test_user]
+                            v = train[member]
+                            weight = self.similarity(u, v)
+                            
+                            if py.isnan(weight) or weight <= self.similarity_threashold: continue
+                            
+                            rates.append(train[member][test_item])
+                            weights.append(weight)                            
+                    if not rates: continue
+                    pred = py.average(rates, weights=weights)
+                
+                errors.append(abs(pred - test[test_user][test_item]))
+        self.errors = errors
+            
 class KmeansTrust(KmeansCF):
+    ''' We claim that in cold conditions [cold_users]:
+    1) trust information is more useful to determine the clusters of cold users than the rating information;
+       two cases: (a) cold users can be clustered, but the identified cluster may not be reliable (due to the un-reliabl compouted similarity); 
+                  (b) cold users cannot be clustered due to the non-computable user similarity; 
+    To verify this: 
+       (1) kmeans-cf uses rating information to determine clusters
+       (2) kmeans-trust uses trust information to determine clusters
+       (3) kmeans-tcf may use both trust and rating information to determine clusters
+    
+    2) through connecting different clusters based on trust links, the coverage can be improved; 
+    3) distrust information may help refine the cluster connections; '''
     
     def __init__(self):
         self.method_id = 'Kmeans Trust'
@@ -1330,6 +1422,111 @@ class KmeansTrust(KmeansCF):
                             g.add_edge(edge)
         g.print_graph()
     
+    def cross_over(self, train, test):
+        n_clusters = int(self.config['kmeans.clusters'])
+        while(True):
+            result = self.kmeans(train, n_clusters=n_clusters)
+            if result is not None:
+                clusters = result[1]
+                break
+            else:
+                print 're-try different initial centroids'
+        
+        errors = []
+        trust = self.trust
+        pred_method = self.config['cluster.pred.method']
+        self.results += ',' + pred_method
+        for test_user in test:
+            # identity the clusters of this test_user
+            cluster = -1
+            for cluster_index, cluster_members in clusters.viewitems():
+                if test_user in cluster_members:
+                    cluster = cluster_index
+                    members = [member for member in cluster_members if member != test_user]
+                    break
+            if cluster == -1:
+                if verbose: 
+                    print 'cannot identify the cluster for user:', test_user
+                '''use trust to determine its clusters'''
+                tns = trust[test_user] if test_user in trust else []
+                if not tns: continue
+                cluster_tns = {}
+                total = 0
+                for tn in tns:
+                    for cluster_index, cluster_members in clusters.viewitems():
+                        if tn in cluster_members:
+                            cnt = cluster_tns[cluster_index] if cluster_index in cluster_tns else 0
+                            cnt += 1
+                            cluster_tns[cluster_index] = cnt
+                            total += 1
+                            break
+                        
+                if not cluster_tns: continue
+            
+            for test_item in test[test_user]:
+                
+                if pred_method == 'mean':
+                    if cluster > -1:
+                        rates = [train[member][test_item] for member in members if test_item in train[member]]
+                        if not rates: continue
+                        pred = py.mean(rates)
+                    else: 
+                        preds = []
+                        weights = []
+                        for cluster_index, cluster_cnt in cluster_tns.viewitems():
+                            members = [member for member in clusters[cluster_index] if member != test_user]
+                            rates = [train[member][test_item] for member in members if test_item in train[member]]
+                            if not rates: continue
+                            preds.append(py.mean(rates))
+                            weights.append(float(cluster_cnt) / total)
+                        if not preds: continue
+                        pred = py.average(preds, weights=weights)
+                
+                elif pred_method == 'wcf':
+                    
+                    if cluster > -1:
+                        rates = []
+                        weights = []
+                        for member in members:
+                            if member == test_user:continue
+                            if test_item in train[member]:
+                                u = train[test_user]
+                                v = train[member]
+                                weight = self.similarity(u, v)
+                                
+                                if py.isnan(weight) or weight <= self.similarity_threashold: continue
+                                
+                                rates.append(train[member][test_item])
+                                weights.append(weight)                            
+                        if not rates: continue
+                        pred = py.average(rates, weights=weights)
+                    
+                    else:
+                        preds = []
+                        weights = []
+                        for cluster_index, cluster_cnt in cluster_tns.viewitems():
+                            rates = []
+                            ws = []
+                            for member in members:
+                                if member == test_user:continue
+                                if test_item in train[member]:
+                                    u = train[test_user]
+                                    v = train[member]
+                                    weight = self.similarity(u, v)
+                                    
+                                    if py.isnan(weight) or weight <= self.similarity_threashold: continue
+                                    
+                                    rates.append(train[member][test_item])
+                                    ws.append(weight)                            
+                            if not rates: continue
+                            pred = py.average(rates, weights=ws)   
+                            weights.append(float(cluster_cnt) / total)
+                        if not preds: continue
+                        pred = py.average(preds, weights=weights)
+                
+                errors.append(abs(pred - test[test_user][test_item]))
+        self.errors = errors
+        
     def cross_over_top_n(self, train, test):
         n_clusters = int(self.config['kmeans.clusters'])
         while(True):
@@ -1433,8 +1630,28 @@ class KmeansTrust(KmeansCF):
                 user_preds[test_user] = predictions
                 
         self.user_preds = user_preds 
-        self.errors = []
 
+class KmeansTrust_train_heavy(KmeansTrust):
+    ''' This class is to train Kmeans method using non-cold users to train the model'''
+    
+    def __init__(self):
+        self.method_id = 'KmeansTrust non-Cold'
+    
+    def prep_test(self, train, test=None):
+        cold_len = 5
+        heavy_len = 10
+        if test is not None:
+            self.train = {user:item_ratings for user, item_ratings in train.items() if len(train[user]) >= cold_len}
+            
+            if self.dataset_mode == 'all':
+                return self.test
+            elif self.dataset_mode == 'cold_users':
+                return {user:item_ratings for user, item_ratings in test.items() if (user not in train or len(train[user]) < cold_len) and user in self.trust}
+            elif self.dataset_mode == 'heavy_users':
+                return {user:item_ratings for user, item_ratings in test.items() if user not in train or len(train[user]) > heavy_len}
+            else:
+                raise ValueError('invalid test data set mode')
+    
 class MF(AbstractCF):
     
     def __init__(self):
@@ -1528,8 +1745,12 @@ def main():
         Trusties().execute()
     elif run_method == 'kmeans':
         KmeansCF().execute()
-    elif run_method == 'kmt':
+    elif run_method == 'kmtrust':
         KmeansTrust().execute()
+    elif run_method == 'kmeans-nc':
+        KmeansCF_train_heavy().execute()
+    elif run_method == 'kmtrust-nc':
+        KmeansTrust_train_heavy().execute()
     elif run_method == 'mf':
         MF().execute()
     else:
