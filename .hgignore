@@ -5,3 +5,5 @@ syntax: regexp
 \.txt$
 syntax: regexp
 ^cf/results\.csv$
+syntax: regexp
+^cf/FilmTrust$

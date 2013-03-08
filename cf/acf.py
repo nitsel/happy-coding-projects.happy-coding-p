@@ -172,10 +172,15 @@ class AbstractCF(object):
             
     def multiple_run(self):
         if self.config['cross.validation.batch'] == on:
-            for i in range(1, 6):
-                self.rating_set = 'u' + str(i) + '.base'
-                self.test_set = 'u' + str(i) + '.test'
-                self.single_run()
+            run_times = int(self.config['kmeans.run.times'])
+            if run_times < 1:
+                run_times = 1
+            for j in range(run_times):
+                print 'current running time is', j + 1
+                for i in range(1, 6):
+                    self.rating_set = 'u' + str(i) + '.base'
+                    self.test_set = 'u' + str(i) + '.test'
+                    self.single_run()
         elif int(self.config['kmeans.init']) > 1:
             for i in range(int(self.config['kmeans.init'])):
                 self.single_run()
