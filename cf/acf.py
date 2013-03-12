@@ -1451,8 +1451,9 @@ class KCF_all(KCF_1):
                         pred = py.average(rates, weights=weights)
                     preds.append(pred)
                     ws.append(sim)
-                
-                pred = py.average(preds, weights=ws)           
+                if not ws: 
+                    continue
+                pred = py.average(preds, weights=ws)
                 errors.append(abs(pred - test[test_user][test_item]))
         self.errors = errors
 
@@ -1787,7 +1788,7 @@ class KMT_1(KMT_all):
                 
                 if pred_method == 'mean':
                     if cluster > -1:
-                        rates = [train[member][test_item] for member in members if test_item in train[member]]
+                        rates = [train[member][test_item] for member in clusters[cluster] if test_item in train[member]]
                         if not rates: continue
                         pred = py.mean(rates)
                     else: 
