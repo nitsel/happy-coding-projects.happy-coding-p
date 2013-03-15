@@ -572,6 +572,27 @@ class ClassicCF(AbstractCF):
                 
         self.errors = errors   
 
+class CCF(ClassicCF):
+    
+    def __init__(self):
+        self.method_id = 'Cold Classic CF'
+    
+    def prep_test(self, train, test=None):
+        cold_len = 5
+        heavy_len = 10
+        if test is not None:
+            self.train2 = train
+            self.train = {user:item_ratings for user, item_ratings in train.items() if len(train[user]) >= cold_len}
+            
+            if self.dataset_mode == 'all':
+                return self.test
+            elif self.dataset_mode == 'cold_users':
+                return {user:item_ratings for user, item_ratings in test.items() if (user not in train or len(train[user]) < cold_len) and user in self.trust}
+            elif self.dataset_mode == 'heavy_users':
+                return {user:item_ratings for user, item_ratings in test.items() if user not in train or len(train[user]) > heavy_len}
+            else:
+                raise ValueError('invalid test data set mode')
+    
 class ClusterCF(ClassicCF):
     
     def __init__(self):
@@ -1391,7 +1412,7 @@ class KCF_all(KCF_1):
        the final prediction is weighted by the similarities
     '''
     def __init__(self):
-        self.method_id='KCF-all'
+        self.method_id = 'KCF-all'
         
     def cross_over(self, train, test):
         n_clusters = int(self.config['kmeans.clusters'])
@@ -1934,27 +1955,31 @@ def main():
     config = load_config()
     AbstractCF.config = config
     
-    run_method = config['run.method'].lower()
-    if run_method == 'cf':
-        ClassicCF().execute()
-    elif run_method == 'trusties':
-        Trusties().execute()
-    elif run_method == 'kmeans':
-        KmeansCF().execute()
-    elif run_method == 'kmtrust':
-        KmeansTrust().execute()
-    elif run_method == 'kcf-1':
-        KCF_1().execute()
-    elif run_method == 'kcf-all':
-        KCF_all().execute()
-    elif run_method == 'kmt-all':
-        KMT_all().execute()
-    elif run_method == 'kmt-1':
-        KMT_1().execute()    
-    elif run_method == 'mf':
-        MF().execute()
-    else:
-        raise ValueError('invalid method to run')
+    methods = config['run.method'].lower().strip().split(',')
+    
+    for method in methods:
+        if method == 'cf':
+            ClassicCF().execute()
+        elif method == 'ccf':
+            CCF().execute()
+        elif method == 'trusties':
+            Trusties().execute()
+        elif method == 'kmeans':
+            KmeansCF().execute()
+        elif method == 'kmtrust':
+            KmeansTrust().execute()
+        elif method == 'kcf-1':
+            KCF_1().execute()
+        elif method == 'kcf-all':
+            KCF_all().execute()
+        elif method == 'kmt-all':
+            KMT_all().execute()
+        elif method == 'kmt-1':
+            KMT_1().execute()    
+        elif method == 'mf':
+            MF().execute()
+        else:
+            raise ValueError('invalid method to run')
 
 def test_io():
     lp = [0.5, 0.3, 0.6]
