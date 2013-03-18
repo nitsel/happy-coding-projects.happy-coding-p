@@ -118,6 +118,7 @@ class AbstractCF(object):
             self.test_set = self.config['test.set']
         
         self.knn = int(self.config['kNN'])
+        self.trust_len = int(self.config['trust.propagation.len'])
         
         self.print_config()
         
@@ -126,6 +127,7 @@ class AbstractCF(object):
         print 'prediction method =', self.prediction_method
         print 'similarity method =', self.similarity_method
         print 'similarity threshold =', self.similarity_threashold
+        print 'trust propagation len =', self.trust_len
         if self.knn > 0: print 'kNN =', self.knn
         # print self.config
         
@@ -184,6 +186,14 @@ class AbstractCF(object):
         elif int(self.config['kmeans.init']) > 1:
             for i in range(int(self.config['kmeans.init'])):
                 self.single_run()
+    
+    def read_trust(self, trust, user):
+        if self.trust_len == 1:
+            tns = trust[user] if user in trust else []
+        else:
+            file_path = 'D:\\Data\\' + self.dataset + '\\MT' + self.trust_len + '\\MoleTrust\\' + user + '.txt'
+            tns = self.ds.load_trust(file_path)
+        return tns
             
     def single_run(self):
         self.results = '{0},{1}'.format(self.method_id, self.dataset_mode)
@@ -202,6 +212,8 @@ class AbstractCF(object):
         self.test = test_data[0]  if test_data is not None else None
         self.test_items = test_data[1]  if test_data is not None else None
         self.test = self.prep_test(self.train, self.test)
+        
+        self.ds = ds
         
         # execute recommendations
         self.perform(self.train, self.test)
@@ -581,8 +593,8 @@ class CCF(ClassicCF):
         cold_len = 5
         heavy_len = 10
         if test is not None:
-            self.train2 = train
-            self.train = {user:item_ratings for user, item_ratings in train.items() if len(train[user]) >= cold_len}
+            # self.train2 = train
+            # self.train = {user:item_ratings for user, item_ratings in train.items() if len(train[user]) >= cold_len}
             
             if self.dataset_mode == 'all':
                 return self.test
@@ -1406,6 +1418,36 @@ class KCF_1(KmeansCF):
                 
                 errors.append(abs(pred - test[test_user][test_item]))
         self.errors = errors
+        
+class KAverage(KCF_1):
+    '''Kmeans with average: average the values of all different clusters. '''
+    
+    def __init__(self):
+        self.method_id = 'Kmeans Average'
+    
+    def cross_over(self, train, test):
+        n_clusters = int(self.config['kmeans.clusters'])
+        while(True):
+            result = self.kmeans(train, n_clusters=n_clusters)
+            if result is not None:
+                centroids, clusters = result
+                break
+            else:
+                print 're-try different initial centroids'
+        
+        errors = []
+        pred_method = self.config['cluster.pred.method']
+        self.results += ',' + pred_method
+        
+        for test_user in test:
+            for test_item in test[test_user]:
+                
+                rates = [centroid[test_item] for centroid in centroids.viewvalues() if test_item in centroid]
+                if not rates: continue
+                pred = py.mean(rates)
+                
+                errors.append(abs(pred - test[test_user][test_item]))
+        self.errors = errors
 
 class KCF_all(KCF_1):
     '''use all the similarity clusters as the clusters of the cold users, 
@@ -1547,7 +1589,7 @@ class KmeansTrust(KmeansCF):
                 if verbose: 
                     print 'cannot identify the cluster for user:', test_user
                 '''use trust to determine its clusters'''
-                tns = trust[test_user] if test_user in trust else []
+                tns = self.read_trust(trust, test_user)
                 if not tns: continue
                 cluster_tns = {}
                 total = 0
@@ -1784,7 +1826,8 @@ class KMT_1(KMT_all):
                 if verbose: 
                     print 'cannot identify the cluster for user:', test_user
                 '''use trust to determine its clusters'''
-                tns = trust[test_user] if test_user in trust else []
+                tns = self.read_trust(trust, test_user)
+                
                 if not tns: continue
                 cluster_tns = {}
                 total = 0
@@ -1962,6 +2005,8 @@ def main():
             ClassicCF().execute()
         elif method == 'ccf':
             CCF().execute()
+        elif method == 'kavg':
+            KAverage().execute()
         elif method == 'trusties':
             Trusties().execute()
         elif method == 'kmeans':
