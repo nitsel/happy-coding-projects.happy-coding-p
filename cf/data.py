@@ -3,6 +3,8 @@ Created on Feb 13, 2013
 
 @author: Felix
 '''
+import os
+
 class Dataset(object): 
     def __init__(self):
         self.count = 0  # number of ratings
@@ -41,6 +43,19 @@ class Dataset(object):
                 trustee_trust = data[trustor] if trustor in data else {}
                 trustee_trust[trustee] = float(trust)
                 data[trustor] = trustee_trust
+        return data
+    
+    def read_trust(self, file_path):
+        ''' {trustee, trust} '''
+        
+        if not os.path.exists(file_path): 
+            return {}
+        
+        data = {}
+        with open(file_path, 'r') as r:
+            for line in r:
+                trustee, trust = line.strip().split(',')
+                data[trustee] = float(trust)
         return data
 
 

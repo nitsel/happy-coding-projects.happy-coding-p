@@ -174,15 +174,23 @@ class AbstractCF(object):
             
     def multiple_run(self):
         if self.config['cross.validation.batch'] == on:
-            run_times = int(self.config['kmeans.run.times'])
-            if run_times < 1:
-                run_times = 1
-            for j in range(run_times):
-                print 'current running time is', j + 1
-                for i in range(1, 6):
-                    self.rating_set = 'u' + str(i) + '.base'
-                    self.test_set = 'u' + str(i) + '.test'
-                    self.single_run()
+            if self.config['kmeans.clusters'] == 'batch':
+                n_clusters = [10 * (i + 1) for i in range(9)]
+            else:
+                n_clusters = [int(self.config['kmeans.clusters'])]
+            
+            for n_cluster in n_clusters:
+                self.n_clusters = n_cluster
+                 
+                run_times = int(self.config['kmeans.run.times'])
+                if run_times < 1:
+                    run_times = 1
+                for j in range(run_times):
+                    print 'current running time is', j + 1
+                    for i in range(1, 6):
+                        self.rating_set = 'u' + str(i) + '.base'
+                        self.test_set = 'u' + str(i) + '.test'
+                        self.single_run()
         elif int(self.config['kmeans.init']) > 1:
             for i in range(int(self.config['kmeans.init'])):
                 self.single_run()
@@ -191,8 +199,8 @@ class AbstractCF(object):
         if self.trust_len == 1:
             tns = trust[user] if user in trust else []
         else:
-            file_path = 'D:\\Data\\' + self.dataset + '\\MT' + self.trust_len + '\\MoleTrust\\' + user + '.txt'
-            tns = self.ds.load_trust(file_path)
+            file_path = 'D:\\Data\\' + self.dataset + '\\MT' + str(self.trust_len) + '\\MoleTrust\\' + user + '.txt'
+            tns = self.ds.read_trust(file_path)
         return tns
             
     def single_run(self):
@@ -662,103 +670,6 @@ class Trusties(ClusterCF):
         '''
         D = self.calc_user_distances(train)
         
-        ''' recommended settings for FilmTrust
-        
-        wpcc (r=10):
-        
-        eps=0.30, minpts = 5, clusters: 5, clustered points: 754, core points: 460 [noted]
-        eps=0.29, minpts = 2, clusters: 5, clustered points: 778, core points: 778
-        eps=0.29, minpts = 10, clusters: 5, clustered points: 456, core points: 101
-        eps=0.28, minpts = 2, clusters: 6, clustered points: 753, core points: 753
-        eps=0.28, minpts = 8, clusters: 5, clustered points: 501, core points: 131
-        eps=0.28, minpts = 9, clusters: 5, clustered points: 438, core points: 97
-        eps=0.27, minpts = 2, clusters: 8, clustered points: 731, core points: 731
-        eps=0.27, minpts = 6, clusters: 6, clustered points: 552, core points: 216
-        eps=0.27, minpts = 10, clusters: 7, clustered points: 309, core points: 52
-        eps=0.26, minpts = 2, clusters: 15, clustered points: 693, core points: 693
-        eps=0.26, minpts = 3, clusters: 6, clustered points: 675, core points: 517 [noted]
-        eps=0.26, minpts = 4, clusters: 7, clustered points: 629, core points: 371
-        eps=0.26, minpts = 5, clusters: 5, clustered points: 554, core points: 258
-        eps=0.26, minpts = 6, clusters: 7, clustered points: 489, core points: 171
-        eps=0.26, minpts = 7, clusters: 5, clustered points: 417, core points: 113
-        eps=0.26, minpts = 8, clusters: 6, clustered points: 356, core points: 79
-        eps=0.26, minpts = 9, clusters: 6, clustered points: 298, core points: 54
-        eps=0.26, minpts = 10, clusters: 7, clustered points: 242, core points: 36
-        eps=0.25, minpts = 2, clusters: 20, clustered points: 652, core points: 652
-        eps=0.25, minpts = 3, clusters: 7, clustered points: 626, core points: 470 [noted]
-        eps=0.25, minpts = 4, clusters: 7, clustered points: 573, core points: 315
-        eps=0.25, minpts = 5, clusters: 7, clustered points: 488, core points: 203
-        eps=0.25, minpts = 6, clusters: 7, clustered points: 420, core points: 131
-        eps=0.25, minpts = 8, clusters: 6, clustered points: 284, core points: 55
-        eps=0.24, minpts = 2, clusters: 27, clustered points: 628, core points: 628
-        eps=0.24, minpts = 3, clusters: 11, clustered points: 596, core points: 423 [noted]
-        eps=0.24, minpts = 4, clusters: 8, clustered points: 513, core points: 258
-        eps=0.24, minpts = 5, clusters: 12, clustered points: 425, core points: 156
-        eps=0.24, minpts = 6, clusters: 6, clustered points: 356, core points: 105
-        eps=0.24, minpts = 9, clusters: 5, clustered points: 142, core points: 19
-        eps=0.23, minpts = 2, clusters: 36, clustered points: 590, core points: 590
-        eps=0.23, minpts = 3, clusters: 12, clustered points: 542, core points: 364
-        eps=0.23, minpts = 4, clusters: 14, clustered points: 456, core points: 212
-        eps=0.23, minpts = 5, clusters: 10, clustered points: 354, core points: 123
-        eps=0.23, minpts = 6, clusters: 9, clustered points: 279, core points: 77
-        eps=0.23, minpts = 8, clusters: 5, clustered points: 133, core points: 21
-        eps=0.22, minpts = 2, clusters: 48, clustered points: 544, core points: 544
-        eps=0.22, minpts = 3, clusters: 13, clustered points: 474, core points: 296
-        eps=0.22, minpts = 4, clusters: 15, clustered points: 381, core points: 161
-        eps=0.22, minpts = 5, clusters: 16, clustered points: 288, core points: 89
-        eps=0.22, minpts = 6, clusters: 7, clustered points: 206, core points: 53
-        eps=0.22, minpts = 7, clusters: 8, clustered points: 133, core points: 22
-        eps=0.22, minpts = 8, clusters: 6, clustered points: 86, core points: 10
-        eps=0.21, minpts = 2, clusters: 57, clustered points: 504, core points: 504
-        eps=0.21, minpts = 3, clusters: 17, clustered points: 424, core points: 253
-        eps=0.21, minpts = 4, clusters: 20, clustered points: 325, core points: 133
-        eps=0.21, minpts = 5, clusters: 14, clustered points: 230, core points: 70
-        eps=0.21, minpts = 6, clusters: 10, clustered points: 146, core points: 32
-        eps=0.21, minpts = 7, clusters: 8, clustered points: 90, core points: 12
-        eps=0.20, minpts = 2, clusters: 63, clustered points: 465, core points: 465
-        eps=0.20, minpts = 3, clusters: 20, clustered points: 379, core points: 218
-        eps=0.20, minpts = 4, clusters: 23, clustered points: 277, core points: 102
-        eps=0.20, minpts = 5, clusters: 16, clustered points: 189, core points: 52
-        eps=0.20, minpts = 6, clusters: 10, clustered points: 108, core points: 20
-        eps=0.20, minpts = 7, clusters: 5, clustered points: 57, core points: 8
-        eps=0.19, minpts = 2, clusters: 71, clustered points: 409, core points: 409
-        eps=0.19, minpts = 3, clusters: 23, clustered points: 313, core points: 171
-        eps=0.19, minpts = 4, clusters: 24, clustered points: 217, core points: 76
-        eps=0.19, minpts = 5, clusters: 14, clustered points: 114, core points: 26
-        eps=0.19, minpts = 6, clusters: 6, clustered points: 56, core points: 8
-        eps=0.18, minpts = 2, clusters: 82, clustered points: 370, core points: 370
-        eps=0.18, minpts = 3, clusters: 26, clustered points: 258, core points: 135
-        eps=0.18, minpts = 4, clusters: 20, clustered points: 168, core points: 57
-        eps=0.18, minpts = 5, clusters: 8, clustered points: 70, core points: 14
-        eps=0.18, minpts = 6, clusters: 5, clustered points: 48, core points: 7
-        eps=0.17, minpts = 2, clusters: 78, clustered points: 317, core points: 317
-        eps=0.17, minpts = 3, clusters: 24, clustered points: 209, core points: 108
-        eps=0.17, minpts = 4, clusters: 15, clustered points: 123, core points: 40
-        eps=0.17, minpts = 5, clusters: 7, clustered points: 61, core points: 12
-        eps=0.16, minpts = 2, clusters: 74, clustered points: 262, core points: 262
-        eps=0.16, minpts = 3, clusters: 25, clustered points: 164, core points: 81
-        eps=0.16, minpts = 4, clusters: 10, clustered points: 83, core points: 28
-        eps=0.15, minpts = 2, clusters: 71, clustered points: 222, core points: 222
-        eps=0.15, minpts = 3, clusters: 22, clustered points: 124, core points: 59
-        eps=0.15, minpts = 4, clusters: 8, clustered points: 50, core points: 14
-        eps=0.14, minpts = 2, clusters: 65, clustered points: 180, core points: 180
-        eps=0.14, minpts = 3, clusters: 17, clustered points: 84, core points: 36
-        eps=0.13, minpts = 2, clusters: 55, clustered points: 145, core points: 145
-        eps=0.13, minpts = 3, clusters: 13, clustered points: 61, core points: 27
-        eps=0.13, minpts = 4, clusters: 5, clustered points: 24, core points: 6
-        eps=0.12, minpts = 2, clusters: 47, clustered points: 121, core points: 121
-        eps=0.12, minpts = 3, clusters: 11, clustered points: 49, core points: 21
-        eps=0.11, minpts = 2, clusters: 32, clustered points: 85, core points: 85
-        eps=0.11, minpts = 3, clusters: 10, clustered points: 41, core points: 18
-        eps=0.10, minpts = 2, clusters: 25, clustered points: 62, core points: 62
-        eps=0.10, minpts = 3, clusters: 6, clustered points: 24, core points: 10
-        eps=0.09, minpts = 2, clusters: 20, clustered points: 46, core points: 46
-        eps=0.08, minpts = 2, clusters: 14, clustered points: 32, core points: 32
-        eps=0.07, minpts = 2, clusters: 11, clustered points: 24, core points: 24
-        eps=0.06, minpts = 2, clusters: 8, clustered points: 16, core points: 16
-        eps=0.05, minpts = 2, clusters: 7, clustered points: 14, core points: 14
-        eps=0.04, minpts = 2, clusters: 6, clustered points: 12, core points: 12
-        '''
         is_test = not True
         if is_test:
             eps = 0.30
@@ -1068,32 +979,6 @@ class KmeansCF(AbstractCF):
     def __init__(self):
         self.method_id = 'Kmeans CF'
 
-    def cluster_users(self, train):
-        # D = self.calc_user_distances(train)
-        verbose = True
-        n_clusters = 7
-        
-        items = self.items.keys()
-        users = train.keys()
-        
-        X = []
-        for user in users:
-            xi = []
-            for item in items:
-                val = train[user][item] if item in train[user] else 0
-                xi.append(val)
-            X.append(xi)
-        k_means = KMeans(init='k-means++', n_clusters=n_clusters, n_init=10)
-        k_means.fit(X)
-        k_means_labels = k_means.labels_
-        k_means_cluster_centers = k_means.cluster_centers_
-        k_means_labels_unique = py.unique(k_means_labels)
-        
-        if verbose:
-            print 'number of cluster centers =', k_means_cluster_centers
-            print 'number of lables =', k_means_labels_unique
-        print 'Done!'
-        
     def kmeans(self, train, n_clusters):
         ''' A good reference: http://home.dei.polimi.it/matteucc/Clustering/tutorial_html/kmeans.html
         '''
@@ -1178,7 +1063,7 @@ class KmeansCF(AbstractCF):
         return centroids, clusters
     
     def cross_over_top_n(self, train, test):
-        n_clusters = int(self.config['kmeans.clusters'])
+        n_clusters = self.n_clusters
         while(True):
             result = self.kmeans(train, n_clusters=n_clusters)
             if result is not None:
@@ -1281,7 +1166,7 @@ class KmeansCF(AbstractCF):
         self.errors = []
         
     def cross_over(self, train, test):
-        n_clusters = int(self.config['kmeans.clusters'])
+        n_clusters = self.n_clusters
         while(True):
             result = self.kmeans(train, n_clusters=n_clusters)
             if result is not None:
@@ -1292,7 +1177,7 @@ class KmeansCF(AbstractCF):
         
         errors = []
         pred_method = self.config['cluster.pred.method']
-        self.results += ',' + pred_method
+        self.results += ',' + pred_method + ',' + str(n_clusters) 
         for test_user in test:
             # identity the clusters of this test_user
             cluster = -1
@@ -1358,7 +1243,7 @@ class KCF_1(KmeansCF):
                 raise ValueError('invalid test data set mode')
             
     def cross_over(self, train, test):
-        n_clusters = int(self.config['kmeans.clusters'])
+        n_clusters = self.n_clusters
         while(True):
             result = self.kmeans(train, n_clusters=n_clusters)
             if result is not None:
@@ -1369,7 +1254,7 @@ class KCF_1(KmeansCF):
         
         errors = []
         pred_method = self.config['cluster.pred.method']
-        self.results += ',' + pred_method
+        self.results += ',' + pred_method + ',' + str(n_clusters) 
         for test_user in test:
             # identity the clusters of this test_user
             cluster = -1
@@ -1426,7 +1311,7 @@ class KAverage(KCF_1):
         self.method_id = 'Kmeans Average'
     
     def cross_over(self, train, test):
-        n_clusters = int(self.config['kmeans.clusters'])
+        n_clusters = self.n_clusters
         while(True):
             result = self.kmeans(train, n_clusters=n_clusters)
             if result is not None:
@@ -1437,7 +1322,7 @@ class KAverage(KCF_1):
         
         errors = []
         pred_method = self.config['cluster.pred.method']
-        self.results += ',' + pred_method
+        self.results += ',' + pred_method + ',' + str(n_clusters) 
         
         for test_user in test:
             for test_item in test[test_user]:
@@ -1457,7 +1342,7 @@ class KCF_all(KCF_1):
         self.method_id = 'KCF-all'
         
     def cross_over(self, train, test):
-        n_clusters = int(self.config['kmeans.clusters'])
+        n_clusters = self.n_clusters
         while(True):
             result = self.kmeans(train, n_clusters=n_clusters)
             if result is not None:
@@ -1468,7 +1353,7 @@ class KCF_all(KCF_1):
         
         errors = []
         pred_method = self.config['cluster.pred.method']
-        self.results += ',' + pred_method
+        self.results += ',' + pred_method + ',' + str(n_clusters)
         for test_user in test:
             # identity the clusters of this test_user
             cluster = -1
@@ -1564,7 +1449,7 @@ class KmeansTrust(KmeansCF):
         g.print_graph()
     
     def cross_over(self, train, test):
-        n_clusters = int(self.config['kmeans.clusters'])
+        n_clusters = self.n_clusters
         while(True):
             result = self.kmeans(train, n_clusters=n_clusters)
             if result is not None:
@@ -1576,7 +1461,7 @@ class KmeansTrust(KmeansCF):
         errors = []
         trust = self.trust
         pred_method = self.config['cluster.pred.method']
-        self.results += ',' + pred_method
+        self.results += ',' + pred_method + ',' + str(n_clusters)
         for test_user in test:
             # identity the clusters of this test_user
             cluster = -1
@@ -1669,7 +1554,7 @@ class KmeansTrust(KmeansCF):
         self.errors = errors
         
     def cross_over_top_n(self, train, test):
-        n_clusters = int(self.config['kmeans.clusters'])
+        n_clusters = self.n_clusters
         while(True):
             result = self.kmeans(train, n_clusters=n_clusters)
             if result is not None:
@@ -1800,7 +1685,7 @@ class KMT_1(KMT_all):
         self.method_id = 'KMT-1'
     
     def cross_over(self, train, test):
-        n_clusters = int(self.config['kmeans.clusters'])
+        n_clusters = self.n_clusters
         while(True):
             result = self.kmeans(train, n_clusters=n_clusters)
             if result is not None:
@@ -1812,7 +1697,7 @@ class KMT_1(KMT_all):
         errors = []
         trust = self.trust
         pred_method = self.config['cluster.pred.method']
-        self.results += ',' + pred_method
+        self.results += ',' + pred_method + ',' + str(n_clusters)
         for test_user in test:
             # identity the clusters of this test_user
             cluster = -1
@@ -1863,6 +1748,7 @@ class KMT_1(KMT_all):
                             rates = [train[member][test_item] for member in members if test_item in train[member]]
                             if not rates: continue
                             preds.append(py.mean(rates))
+                            # recompute weight using the other formula
                             weights.append(float(cluster_cnt) / total)
                         if not preds: continue
                         pred = py.average(preds, weights=weights)
