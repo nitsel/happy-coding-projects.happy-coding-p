@@ -10,7 +10,7 @@ import operator
 from scipy.spatial import distance
 from scipy import stats
 from data import Dataset
-#from sklearn.cluster import DBSCAN
+# from sklearn.cluster import DBSCAN
 from graph import Graph, Vertex, Edge
 import random
 from common import emailer
@@ -90,6 +90,8 @@ class AbstractCF(object):
     trust_set = 'trust.txt'
     debug_file = 'results.txt'  # results.csv used for formal results
     peek_interval = 20
+    cold_len = 5
+    heavy_len = 10
     config = {}
     errors = []
     user_preds = {}
@@ -678,7 +680,7 @@ class ClusterCF(ClassicCF):
 
 class Trusties(ClusterCF):
     '''
-    Trusties prototype for DBSCAN clustering method-based CF
+    Trusties: the implementation of trust-based clustering methods
     '''
     def __init__(self):
         self.method_id = 'Trusties'
@@ -765,7 +767,7 @@ class Trusties(ClusterCF):
             
             return self.calc_trust_distance(next_depth_users, trustee, depth, visited_users)
         
-    def perform(self, train, test):
+    def cross_over(self, train, test):
         db = self.kmeans(train)
         
         # for test purpose
@@ -993,6 +995,127 @@ class Trusties(ClusterCF):
                 error = abs(pred - test[test_user][test_item])
                 errors.append(error)
         self.errors = errors
+
+class Trusties2(Trusties):
+    
+    def __init__(self):
+        self.method_id = 'Trusties2'
+    
+    def prep_test(self, train, test=None):
+        if test is not None:
+            self.train2 = train
+            self.train = {user:item_ratings for user, item_ratings in train.items() if len(train[user]) >= self.cold_len}
+            
+            if self.dataset_mode == 'all':
+                return self.test
+            elif self.dataset_mode == 'cold_users':
+                return {user:item_ratings for user, item_ratings in test.items() if (user not in train or len(train[user]) < self.cold_len) and user in self.trust}
+            elif self.dataset_mode == 'heavy_users':
+                return {user:item_ratings for user, item_ratings in test.items() if user not in train or len(train[user]) > self.heavy_len}
+            else:
+                raise ValueError('invalid test data set mode')
+            
+    def gen_cluster_graph(self, cluster_result):
+        centroids = cluster_result[0]
+        clusters = cluster_result[1]
+        
+        g = Graph()
+        
+        # generate vertices
+        vs = {c: Vertex(c) for c in centroids.viewkeys()}
+        
+        # genrate edges
+        for c1 in vs.viewkeys(): 
+            c1ms = clusters[c1]
+            for c2 in vs.viewkeys(): 
+                # currently, we ignore the circular links
+                if c1 == c2: continue
+                
+                c2ms = clusters[c2]
+                links = {c1m:c2m for c1m in c1ms for c2m in c2ms if c1m in self.trust and c2m in self.trust[c1m]}
+                
+                if links:
+                    edge = Edge(vs[c1], vs[c2])
+                    r = len(links)
+                    edge.weight = 1.0 / (1 + math.exp(-r))
+                    g.add_edge(edge)
+        
+        if debug: g.print_graph()
+        return g.page_rank(d=0.85, normalized=True)
+        
+    def cross_over(self, train, test):
+        while(True):
+            result = self.kmeans(train, n_clusters=self.n_clusters)
+            if result is not None:
+                centroids, clusters = result
+                break
+            else:
+                print 're-try different initial centroids'
+        
+        # global importance
+        cluster_gs = self.gen_cluster_graph(result)
+        
+        errors = []
+        pred_method = self.config['cluster.pred.method']
+        self.results += ',' + pred_method + ',' + str(self.n_clusters) 
+        for test_user in test:
+           
+            # trust value
+            tns = self.read_trust(self.trust, test_user)
+            
+            if tns:
+                cluster_tns = {}
+                cluster_ws = {}   
+                for cluster_id, cluster_ms in clusters.viewitems():
+                    cnt = 0
+                    for tn in tns: 
+                        if tn in cluster_ms:
+                            cnt += 1
+                    if cnt > 0:
+                        cluster_tns[cluster_id] = cnt
+                        cluster_ws[cluster_id] = 2 / (1 + math.exp(-cnt)) - 1.0
+            
+            # similarity value
+            rs = self.train2[test_user] if test_user in self.train2 else []
+            if rs: 
+                cluster_ss = {}
+                for cluster_id, centroid in centroids.viewitems():
+                    sim = self.similarity(centroid, rs)
+                    if not py.isnan(sim) and sim > 0:
+                        cluster_ss[cluster_id] = sim
+            
+            # local importance
+            alpha = float(self.config['trusties.trust.alpha'])
+            if tns or rs:
+                local_weight = {}
+                for cluster_id in centroids.viewkeys():
+                    w = cluster_ws[cluster_id] if cluster_id in cluster_ws else 0
+                    s = cluster_ss[cluster_id] if cluster_id in cluster_ss else 0
+                    if w > 0 or s > 0:
+                        local_weight[cluster_id] = alpha * w + (1 - alpha) * s
+            
+            # predict item's rating
+            beta = float(self.config['trusties.local.beta'])
+            for test_item in test[test_user]:
+                truth = test[test_user][test_item]
+                
+                preds = []
+                weights = []
+                for cluster_id, centroid in centroids.viewitems():
+                    if test_item in centroid:
+                        lw = local_weight[cluster_id] if cluster_id in local_weight else 0
+                        gc = cluster_gs[cluster_id] if cluster_id in cluster_gs else 0
+                        ws = beta * lw + (1 - beta) * gc
+                        if ws > 0:
+                            preds.append(centroid[test_item])
+                            weights.append(ws)
+                if not preds:
+                    continue
+                
+                pred = py.average(preds, weights=weights)
+                errors.append(abs(pred - truth))
+        self.errors = errors
+                        
 
 class KmeansCF(AbstractCF):
     def __init__(self):
@@ -1916,6 +2039,8 @@ def main():
             KAverage().execute()
         elif method == 'trusties':
             Trusties().execute()
+        elif method == 'trusties2':
+            Trusties2().execute()
         elif method == 'kmeans':
             KmeansCF().execute()
         elif method == 'kmtrust':
