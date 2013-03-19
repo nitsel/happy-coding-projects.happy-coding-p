@@ -116,7 +116,7 @@ class AbstractCF(object):
             self.test_set = self.config['test.set']
         
         if sys.platform.startswith('win32'):
-            self.temp_directory='D:\\Data\\'+self.dataset+"\\"
+            self.temp_directory = 'D:/Data/' + self.dataset + "/"
         else:
             self.temp_directory = self.config['dataset.temp.directory'].replace('$run.dataset$', self.dataset)
         
@@ -202,7 +202,7 @@ class AbstractCF(object):
         if self.trust_len == 1:
             tns = trust[user] if user in trust else []
         else:
-            file_path = self.temp_directory + '\\MT' + str(self.trust_len) + '\\MoleTrust\\' + user + '.txt'
+            file_path = self.temp_directory + '/MT' + str(self.trust_len) + '/MoleTrust/' + user + '.txt'
             tns = self.ds.read_trust(file_path)
         return tns
             
