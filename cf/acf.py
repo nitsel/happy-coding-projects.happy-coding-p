@@ -10,7 +10,7 @@ import operator
 from scipy.spatial import distance
 from scipy import stats
 from data import Dataset
-from sklearn.cluster import DBSCAN
+#from sklearn.cluster import DBSCAN
 from graph import Graph, Vertex, Edge
 import random
 from common import emailer
@@ -683,10 +683,10 @@ class Trusties(ClusterCF):
     def __init__(self):
         self.method_id = 'Trusties'
         
-    def kmeans(self, train):
-        '''
+    '''def kmeans(self, train):
+        
         kmeans the training users
-        '''
+        
         D = self.calc_user_distances(train)
         
         is_test = not True
@@ -717,7 +717,7 @@ class Trusties(ClusterCF):
         else:
             self.eps = 0.26
             self.minpts = 3
-            return DBSCAN(eps=self.eps, min_samples=self.minpts, metric='precomputed').fit(D)
+            return DBSCAN(eps=self.eps, min_samples=self.minpts, metric='precomputed').fit(D)'''
                     
     def gen_cluster_graph(self, db):
         labels = db.labels_
