@@ -19,7 +19,7 @@ def send_email(**params):
     To = params['To'] if 'To' in params else 'gguo1@e.ntu.edu.sg'
     
     attch = params['file'] if 'file' in params else ''
-    text = params['text'] if 'text' in params else 'some texts'
+    text = params['text'] if 'text' in params else ''
     
     msg = MIMEMultipart()
     msg['From'] = From
@@ -35,7 +35,8 @@ def send_email(**params):
         part.add_header('Content-Disposition', 'attachment; filename="%s"' % os.path.basename(attch))
         msg.attach(part)
     
-    msg.attach(MIMEText(text))
+    if text!='':
+        msg.attach(MIMEText(text))
     
     server = smtplib.SMTP_SSL(host=host, port=465)
     server.login('guobingyou', 'through@pass')

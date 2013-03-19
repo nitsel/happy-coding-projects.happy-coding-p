@@ -24,7 +24,6 @@ off = 'off'
 
 debug = not True
 verbose = True
-method_label = ''
 
 def load_config():
     config = {}
@@ -181,9 +180,9 @@ class AbstractCF(object):
             self.single_run()
         
         # copy file to back up results
-        dst = 'Results'
+        dst = 'Results/' + self.dataset
         if not os.path.isdir(dst): 
-            os.mkdir(dst)
+            os.makedirs(dst)
         new_file = method_label + '@' + str(datetime.datetime.now()).replace(':', '-') + '.txt'
         shutil.copy2(self.debug_file, dst + '/' + new_file)
         
@@ -1905,7 +1904,8 @@ def main():
     AbstractCF.config = config
     
     methods = config['run.method'].lower().strip().split(',')
-    method_label = ''.join(methods)
+    global method_label
+    method_label = '_'.join(methods)
     
     for method in methods:
         if method == 'cf':
