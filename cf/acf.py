@@ -3,7 +3,7 @@ Created on Feb 15, 2013
 
 @author: guoguibing
 '''
-import math, os, pickle, sys, shutil, socket
+import math, os, pickle, sys, shutil, socket, datetime
 import numpy as py
 import logging as logs
 import operator
@@ -24,6 +24,7 @@ off = 'off'
 
 debug = not True
 verbose = True
+method_label = ''
 
 def load_config():
     config = {}
@@ -183,11 +184,12 @@ class AbstractCF(object):
         dst = 'Results'
         if not os.path.isdir(dst): 
             os.mkdir(dst)
-        shutil.copy2(self.debug_file, dst + '/' + self.debug_file)
+        new_file = method_label + '@' + str(datetime.datetime.now()).replace(':', '-') + '.txt'
+        shutil.copy2(self.debug_file, dst + '/' + new_file)
         
         # notify me when it is finished
         if self.config['results.email.notification'] == on:
-            subject = 'Program is finished @{0:f}'.format(socket.gethostname())
+            subject = 'Program is finished @ {0:s}'.format(socket.gethostname())
             emailer.send_email(file=self.debug_file, Subject=subject)
             print 'An email with results has been sent to you.' 
         
@@ -1903,6 +1905,7 @@ def main():
     AbstractCF.config = config
     
     methods = config['run.method'].lower().strip().split(',')
+    method_label = ''.join(methods)
     
     for method in methods:
         if method == 'cf':

@@ -3,7 +3,7 @@ Created on Feb 20, 2013
 
 @author: guoguibing
 '''
-import smtplib, os
+import smtplib, os, socket
 
 from email import encoders
 from email.mime.base import MIMEBase
@@ -37,7 +37,7 @@ def send_email(**params):
     
     msg.attach(MIMEText(text))
     
-    server = smtplib.SMTP(host=host, port=587)
+    server = smtplib.SMTP_SSL(host=host, port=465)
     server.login('guobingyou', 'through@pass')
     
     try:
