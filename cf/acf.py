@@ -3,7 +3,7 @@ Created on Feb 15, 2013
 
 @author: guoguibing
 '''
-import math, os, pickle, sys
+import math, os, pickle, sys, shutil
 import numpy as py
 import logging as logs
 import operator
@@ -13,6 +13,7 @@ from data import Dataset
 from sklearn.cluster import DBSCAN
 from graph import Graph, Vertex, Edge
 import random
+from common import emailer
 
 cross_validation = 'cross_validation'
 leave_one_out = 'leave_one_out'
@@ -166,6 +167,9 @@ class AbstractCF(object):
         
     def execute(self):
         self.config_cf()
+        
+        # clean result file
+        open(self.debug_file, 'w').close()
         logs.basicConfig(filename=self.debug_file, filemode='a', level=logs.DEBUG, format="%(message)s")
         
         # run multiple times at one shot
@@ -174,7 +178,17 @@ class AbstractCF(object):
             self.multiple_run()
         else:
             self.single_run()
-            
+        
+        # copy file to back up results
+        dst = 'Results'
+        os.mkdir(dst)
+        shutil.copy2(self.debug_file, dst + '/' + self.debug_file)
+        
+        # notify me when it is finished
+        if self.config['results.email.notification'] == on:
+            emailer.send_email(file=self.debug_file)
+            print 'An email with results has been sent to you.' 
+        
     def multiple_run(self):
         if self.config['cross.validation.batch'] == on:
             if self.config['kmeans.clusters'] == 'batch':
@@ -256,8 +270,7 @@ class AbstractCF(object):
         pass
     
     def collect_results(self):
-        # print performance
-        write_out = self.config['write.results'] == on
+        '''collect and print the final results'''
         
         total_test = sum([len(value) for value in self.test.viewvalues() ])
         if self.user_preds:
@@ -358,7 +371,7 @@ class AbstractCF(object):
             self.results += ',{0:.6f},{1:.6f},{2:2.2f}%'.format(MAE, RMSE, RC)
         
         self.results += ',' + self.data_file
-        if write_out: logs.debug(self.results)
+        logs.debug(self.results)
     
     def pairs(self, a, b):
         vas = []
