@@ -3,7 +3,7 @@ Created on Feb 15, 2013
 
 @author: guoguibing
 '''
-import math, os, pickle
+import math, os, pickle, sys
 import numpy as py
 import logging as logs
 import operator
@@ -13,8 +13,6 @@ from data import Dataset
 from sklearn.cluster import DBSCAN
 from graph import Graph, Vertex, Edge
 import random
-from sklearn.cluster.k_means_ import KMeans
-from cf import graph
 
 cross_validation = 'cross_validation'
 leave_one_out = 'leave_one_out'
@@ -117,6 +115,11 @@ class AbstractCF(object):
             self.rating_set = self.config['train.set']
             self.test_set = self.config['test.set']
         
+        if sys.platform.startswith('win32'):
+            self.temp_directory='D:\\Data\\'+self.dataset+"\\"
+        else:
+            self.temp_directory = self.config['dataset.temp.directory'].replace('$run.dataset$', self.dataset)
+        
         self.knn = int(self.config['kNN'])
         self.trust_len = int(self.config['trust.propagation.len'])
         
@@ -199,7 +202,7 @@ class AbstractCF(object):
         if self.trust_len == 1:
             tns = trust[user] if user in trust else []
         else:
-            file_path = 'D:\\Data\\' + self.dataset + '\\MT' + str(self.trust_len) + '\\MoleTrust\\' + user + '.txt'
+            file_path = self.temp_directory + '\\MT' + str(self.trust_len) + '\\MoleTrust\\' + user + '.txt'
             tns = self.ds.read_trust(file_path)
         return tns
             
