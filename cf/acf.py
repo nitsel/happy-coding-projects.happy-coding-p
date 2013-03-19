@@ -3,7 +3,7 @@ Created on Feb 15, 2013
 
 @author: guoguibing
 '''
-import math, os, pickle, sys, shutil
+import math, os, pickle, sys, shutil, socket
 import numpy as py
 import logging as logs
 import operator
@@ -187,7 +187,8 @@ class AbstractCF(object):
         
         # notify me when it is finished
         if self.config['results.email.notification'] == on:
-            emailer.send_email(file=self.debug_file)
+            subject = 'Program is finished @{0:f}'.format(socket.gethostname())
+            emailer.send_email(file=self.debug_file, Subject=subject)
             print 'An email with results has been sent to you.' 
         
     def multiple_run(self):
