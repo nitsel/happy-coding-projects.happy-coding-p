@@ -181,7 +181,8 @@ class AbstractCF(object):
         
         # copy file to back up results
         dst = 'Results'
-        os.mkdir(dst)
+        if not os.path.isdir(dst): 
+            os.mkdir(dst)
         shutil.copy2(self.debug_file, dst + '/' + self.debug_file)
         
         # notify me when it is finished
