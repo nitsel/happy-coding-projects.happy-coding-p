@@ -141,7 +141,8 @@ class Graph(object):
             if errors < error_threshold:
                 # print 'stop at iteration', i, 'out of', iteration
                 break
-        norm = sum([node.weight for node in self.source_target_edges.viewkeys()]) if normalized else 1.0
+        norm = max([node.weight for node in self.source_target_edges.viewkeys()]) if normalized else 1.0
+        # norm = sum([node.weight for node in self.source_target_edges.viewkeys()]) if normalized else 1.0
         return {node.identity: node.weight / float(norm) for node in self.source_target_edges.viewkeys()}
 
 def test_page_rank():
