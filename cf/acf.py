@@ -8,12 +8,11 @@ import numpy as py
 import logging as logs
 import operator
 from scipy.spatial import distance
-from scipy import stats
 from data import Dataset
 # from sklearn.cluster import DBSCAN
 from graph import Graph, Vertex, Edge
-import random
-from common import emailer
+import random, emailer
+from scipy import stats
 
 cross_validation = 'cross_validation'
 leave_one_out = 'leave_one_out'
@@ -185,7 +184,7 @@ class AbstractCF(object):
         dst = 'Results/' + self.dataset
         if not os.path.isdir(dst): 
             os.makedirs(dst)
-        new_file = method_label + '@' + str(datetime.datetime.now()).replace(':', '-') + '.txt'
+        new_file = self.method_id + '@' + str(datetime.datetime.now()).replace(':', '-') + '.txt'
         shutil.copy2(self.debug_file, dst + '/' + new_file)
         
         # notify me when it is finished
@@ -1002,7 +1001,7 @@ class KmeansCF(AbstractCF):
         '''
         print 'Start to cluster users ...',
         last_errors = 0
-        tol = 0.0000001
+        tol = 0.00001
         
         # items = self.items.keys()
         users = train.keys()
@@ -1679,6 +1678,7 @@ class Trusties2(KmeansCF):
     
     def __init__(self):
         self.method_id = 'Trusties2'
+        self.base = 2.0
     
     def prep_test(self, train, test=None):
         if test is not None:
@@ -1716,13 +1716,99 @@ class Trusties2(KmeansCF):
                 if links:
                     edge = Edge(vs[c1], vs[c2])
                     r = len(links)
-                    edge.weight = 1.0 / (1 + math.exp(-r / 2.0))
+                    edge.weight = 2.0 / (1 + math.exp(-r / self.base)) - 1.0
                     g.add_edge(edge)
         
         if debug: g.print_graph()
         return g.page_rank(d=0.85, normalized=True)
+    
+    def gen_cluster_trust(self, cluster_result):
+        # centroids = cluster_result[0]
+        clusters = cluster_result[1]
+        
+        cluster_trust = {}
+        # genrate edges
+        for c1, c1ms in clusters.viewitems(): 
+            cluster_rs = {}
+            for c2, c2ms in clusters.viewitems(): 
+                # currently, we ignore the circular links
+                if c1 == c2: continue
+                
+                links = {c1m:c2m for c1m in c1ms for c2m in c2ms if c1m in self.trust and c2m in self.trust[c1m]}
+                
+                
+                if links:
+                    r = len(links)
+                    cluster_rs[c2] = r
+            
+            sum_rs = sum(cluster_rs.values())
+            for cluster_id, r in cluster_rs.viewitems():
+                t = 2.0 / (1 + math.exp(-r / 5.0)) - 1.0
+                # t = float(r) / sum_rs
+                c_trust = cluster_trust[c1] if c1 in cluster_trust else {}
+                c_trust[cluster_id] = t
+                cluster_trust[c1] = c_trust
+        
+        return cluster_trust
+    
+    def propagate_trust(self, source, cluster_ws, cluster_trust, prop_len):
+        ''' apply MoleTrust to infer trust value of cluster
+            
+            ------------------
+            cluster_ws: directly trusted cluster
+            cluster_trust: all the trust information among clusters
+            prop_len: propagated length'''
+        # len 1
+        dist = 1
+        visited = []
+        cluster_ts = {key:val for key, val in cluster_ws.viewitems()}
+        visited.extend(cluster_ts.keys())
+        
+        cluster_dist = {}
+        cluster_dist[dist] = cluster_ws.keys()
+        
+        trust_threshold = 0.2
+        
+        while dist < prop_len:
+            c_processors = {}
+            dist += 1
+            
+            new_nodes = []
+            if (dist - 1) not in cluster_dist:
+                print 'stop here'
+                return cluster_ts
+            
+            for cluster in cluster_dist[dist - 1]:
+                next_clusters = cluster_trust[cluster] if cluster in cluster_trust else {}
+                for c in next_clusters.viewkeys():
+                    if c not in visited:
+                        processors = c_processors[cluster] if cluster in c_processors else []
+                        processors.append(cluster)
+                        c_processors[c] = processors
+                        
+                        cs = cluster_dist[dist] if dist in cluster_dist else []
+                        if c not in cs:
+                            cs.append(c)
+                            cluster_dist[dist] = cs
+                        
+                        if c not in new_nodes:
+                            new_nodes.append(c)
+            visited.extend(new_nodes)
+            
+            for cluster, processors in c_processors.viewitems():
+                nodes = [cluster_ts[processor] for processor in processors if processor in cluster_ts and cluster_ts[processor] > trust_threshold]
+                edges = [cluster_trust[processor][cluster] for processor in processors if processor in cluster_ts and cluster_ts[processor] > trust_threshold]
+                
+                '''if len(nodes) == 1:
+                    cluster_ts[cluster] = nodes[0] * edges[0]
+                else:'''
+                if nodes:
+                    cluster_ts[cluster] = py.average(edges, weights=nodes)
+        
+        return cluster_ts
         
     def cross_over(self, train, test):
+        
         while(True):
             cluster_result = self.kmeans(train, n_clusters=self.n_clusters)
             if cluster_result is not None:
@@ -1731,8 +1817,14 @@ class Trusties2(KmeansCF):
             else:
                 print 're-try different initial centroids'
         
-        # global importance
-        global_weight = self.gen_cluster_graph(cluster_result)
+        global_importance = not True
+        
+        if global_importance:
+            # global importance
+            global_weight = self.gen_cluster_graph(cluster_result)
+            global_weight = {int(key):val for key, val in global_weight.viewitems()}
+        else:
+            cluster_trust = self.gen_cluster_trust(cluster_result)
         
         errors = []
         cluster_overlaps = []
@@ -1746,12 +1838,14 @@ class Trusties2(KmeansCF):
         self.results += ',' + str(alpha) + ',' + str(beta)
         
         for test_user in test:
+            
             # trust value
             tns = self.read_trust(self.trust, test_user)
             
             cluster_tns = {}
             cluster_ws = {}  
             if tns:
+                # len_tns = len(tns)
                 for cluster_id, cluster_ms in clusters.viewitems():
                     r = 0
                     for tn in tns: 
@@ -1759,7 +1853,16 @@ class Trusties2(KmeansCF):
                             r += 1
                     if r > 0:
                         cluster_tns[cluster_id] = r
-                        cluster_ws[cluster_id] = 1.0 / (1 + math.exp(-r / 2.0))
+                
+                sum_r = sum(cluster_tns.values())
+                for cluster_id, r in cluster_tns.viewitems():
+                    cluster_ws[cluster_id] = 2.0 / (1 + math.exp(-r / self.base)) - 1.0
+                    # cluster_ws[cluster_id] = float(r) / sum_r
+                
+                # propagate trust
+                prop_len = 3
+                if global_importance and cluster_ws:
+                    cluster_ws = self.propagate_trust(test_user, cluster_ws, cluster_trust, prop_len)
             
             # similarity value
             cluster_ss = {}
@@ -1779,10 +1882,24 @@ class Trusties2(KmeansCF):
                     w = cluster_ws[cluster_id] if cluster_id in cluster_ws else 0
                     s = cluster_ss[cluster_id] if cluster_id in cluster_ss else 0
                     if w > 0 or s > 0:
-                        local_weight[cluster_id] = alpha * w + (1 - alpha) * s
+                        if s > 0:
+                            if w == 0:
+                                val = s
+                            elif s == 0:
+                                val = 0
+                            elif w > 0.5 and s > 0.5:
+                                val = math.pow(s, 1 - w)
+                            else:
+                                val = 0
+                        else:
+                            val = 0
+                            
+                        local_weight[cluster_id] = alpha * w + (1 - alpha) * val
                     
                         if w > 0 and s > 0:
+                            # print s, 2 * w - 1, val
                             overlap += 1
+                            
                         total += 1
                 if total > 0:
                     cluster_overlaps.append(float(overlap) / total)
@@ -1796,7 +1913,306 @@ class Trusties2(KmeansCF):
                 for cluster_id, centroid in centroids.viewitems():
                     if test_item in centroid:
                         lw = local_weight[cluster_id] if cluster_id in local_weight else 0
-                        gw = global_weight[cluster_id] if cluster_id in global_weight else 0
+                        
+                        if global_importance:
+                            gw = global_weight[cluster_id] if cluster_id in global_weight else 0
+                        else:
+                            gw = 0
+                        # cluster weight
+                        cw = beta * lw + (1 - beta) * gw
+                        if cw > 0:
+                            ms = [m for m in clusters[cluster_id] if test_item in train[m]]
+                            rates = [train[m][test_item] for m in ms]
+                            ws = []
+                            for m in ms:
+                                if m in tns:
+                                    ws.append(1.05)
+                                else:
+                                    ws.append(1.0)
+                            pred = py.average(rates, weights=ws)
+                            preds.append(pred)
+                            weights.append(cw)
+                if not preds:
+                    continue
+                
+                pred = py.average(preds, weights=weights)
+                errors.append(abs(pred - truth))
+        
+        self.results += ',{0:.6f}'.format(py.mean(cluster_overlaps))
+        self.errors = errors
+  
+class Trusties3(Trusties2):
+    
+    def __init__(self):
+        self.method_id = 'Trusties3'
+            
+    def gen_cluster_graph(self, cluster_result):
+        centroids = cluster_result[0]
+        clusters = cluster_result[1]
+        
+        g = Graph()
+        
+        # generate vertices
+        vs = {c: Vertex(c) for c in centroids.viewkeys()}
+        
+        # genrate edges
+        for c1 in vs.viewkeys(): 
+            c1ms = clusters[c1]
+            for c2 in vs.viewkeys(): 
+                # currently, we ignore the circular links
+                if c1 == c2: continue
+                
+                c2ms = clusters[c2]
+                links = {c1m:c2m for c1m in c1ms for c2m in c2ms if c1m in self.trust and c2m in self.trust[c1m]}
+                
+                if links:
+                    edge = Edge(vs[c1], vs[c2])
+                    r = len(links)
+                    edge.weight = 2.0 / (1 + math.exp(-r / 2.0)) - 1.0
+                    g.add_edge(edge)
+        
+        if debug: g.print_graph()
+        return g.page_rank(d=0.85, normalized=True)
+    
+    def gen_cluster_trust(self, cluster_result):
+        # centroids = cluster_result[0]
+        clusters = cluster_result[1]
+        
+        cluster_trust = {}
+        # genrate edges
+        for c1, c1ms in clusters.viewitems(): 
+            cluster_rs = {}
+            for c2, c2ms in clusters.viewitems(): 
+                # currently, we ignore the circular links
+                if c1 == c2: continue
+                
+                links = {c1m:c2m for c1m in c1ms for c2m in c2ms if c1m in self.trust and c2m in self.trust[c1m]}
+                
+                
+                if links:
+                    r = len(links)
+                    cluster_rs[c2] = r
+            
+            sum_rs = sum(cluster_rs.values())
+            for cluster_id, r in cluster_rs.viewitems():
+                # t = 2.0 / (1 + math.exp(-r / 2.0)) - 1.0
+                t = float(r) / sum_rs
+                c_trust = cluster_trust[c1] if c1 in cluster_trust else {}
+                c_trust[cluster_id] = t
+                cluster_trust[c1] = c_trust
+        
+        return cluster_trust
+    
+    def propagate_trust(self, source, cluster_ws, cluster_trust, prop_len):
+        ''' apply MoleTrust to infer trust value of cluster
+            
+            ------------------
+            cluster_ws: directly trusted cluster
+            cluster_trust: all the trust information among clusters
+            prop_len: propagated length'''
+        # len 1
+        dist = 1
+        visited = []
+        cluster_ts = {key:val for key, val in cluster_ws.viewitems()}
+        visited.extend(cluster_ts.keys())
+        
+        cluster_dist = {}
+        cluster_dist[dist] = cluster_ws.keys()
+        
+        trust_threshold = 0
+        
+        while dist < prop_len:
+            c_processors = {}
+            dist += 1
+            
+            new_nodes = []
+            if (dist - 1) not in cluster_dist:
+                print 'stop here'
+                return cluster_ts
+            
+            for cluster in cluster_dist[dist - 1]:
+                next_clusters = cluster_trust[cluster] if cluster in cluster_trust else {}
+                for c in next_clusters.viewkeys():
+                    if c not in visited:
+                        processors = c_processors[cluster] if cluster in c_processors else []
+                        processors.append(cluster)
+                        c_processors[c] = processors
+                        
+                        cs = cluster_dist[dist] if dist in cluster_dist else []
+                        if c not in cs:
+                            cs.append(c)
+                            cluster_dist[dist] = cs
+                        
+                        if c not in new_nodes:
+                            new_nodes.append(c)
+            visited.extend(new_nodes)
+            
+            for cluster, processors in c_processors.viewitems():
+                nodes = [cluster_ts[processor] for processor in processors if processor in cluster_ts and cluster_ts[processor] > trust_threshold]
+                edges = [cluster_trust[processor][cluster] for processor in processors if processor in cluster_ts and cluster_ts[processor] > trust_threshold]
+                
+                if nodes:
+                    if len(nodes) == 1:
+                        cluster_ts[cluster] = nodes[0] * edges[0]
+                    else:
+                    # if nodes:
+                        cluster_ts[cluster] = py.average(edges, weights=nodes)
+        
+        return cluster_ts
+        
+    def cross_over(self, train, test):
+        
+        while(True):
+            cluster_result = self.kmeans(train, n_clusters=self.n_clusters)
+            if cluster_result is not None:
+                centroids, clusters = cluster_result
+                break
+            else:
+                print 're-try different initial centroids'
+        
+        global_importance = not True
+        
+        if global_importance:
+            # global importance
+            global_weight = self.gen_cluster_graph(cluster_result)
+            global_weight = {int(key):val for key, val in global_weight.viewitems()}
+        else:
+            cluster_trust = self.gen_cluster_trust(cluster_result)
+        
+        errors = []
+        cluster_overlaps = []
+        
+        pred_method = self.config['cluster.pred.method']
+        self.results += ',' + pred_method + ',' + str(self.n_clusters) 
+        
+        alpha = float(self.config['trusties.trust.alpha'])
+        beta = float(self.config['trusties.local.beta'])
+        # record (alpha, beta) values
+        self.results += ',' + str(alpha) + ',' + str(beta)
+        
+        # for training 
+        trusts = []
+        sims = []
+        for test_user in test:
+            
+            # trust value
+            tns = self.read_trust(self.trust, test_user)
+            
+            cluster_tns = {}
+            cluster_ws = {}  
+            if tns:
+                # len_tns = len(tns)
+                for cluster_id, cluster_ms in clusters.viewitems():
+                    r = 0
+                    for tn in tns: 
+                        if tn in cluster_ms:
+                            r += 1
+                    if r > 0:
+                        cluster_tns[cluster_id] = r
+                
+                sum_r = sum(cluster_tns.values())
+                for cluster_id, r in cluster_tns.viewitems():
+                    cluster_ws[cluster_id] = 2.0 / (1 + math.exp(-r / 2.0)) - 1.0
+                    # cluster_ws[cluster_id] = float(r) / sum_r
+                
+                # propagate trust
+                prop_len = 3
+                if not global_importance and cluster_ws:
+                    cluster_ws = self.propagate_trust(test_user, cluster_ws, cluster_trust, prop_len)
+            
+            # similarity value
+            cluster_ss = {}
+            rs = self.train2[test_user] if test_user in self.train2 else []
+            if rs: 
+                for cluster_id, centroid in centroids.viewitems():
+                    sim = self.similarity(centroid, rs)
+                    if not py.isnan(sim) and sim > 0:
+                        cluster_ss[cluster_id] = sim
+            
+            # local importance
+            if tns or rs:
+                for cluster_id in centroids.viewkeys():
+                    w = cluster_ws[cluster_id] if cluster_id in cluster_ws else 0
+                    s = cluster_ss[cluster_id] if cluster_id in cluster_ss else 0
+                    if w > 0 and s > 0:
+                        trusts.append(w)
+                        sims.append(s)
+                            
+        # least squar to learn: sim = a + b * t
+        slope, intercept, r_val, p_val, std_err = stats.linregress(trusts, sims)
+        print slope, intercept, r_val, p_val, std_err
+        
+        # for testing
+        for test_user in test:
+            # trust value
+            tns = self.read_trust(self.trust, test_user)
+            
+            cluster_tns = {}
+            cluster_ws = {}  
+            if tns:
+                # len_tns = len(tns)
+                for cluster_id, cluster_ms in clusters.viewitems():
+                    r = 0
+                    for tn in tns: 
+                        if tn in cluster_ms:
+                            r += 1
+                    if r > 0:
+                        cluster_tns[cluster_id] = r
+                
+                sum_r = sum(cluster_tns.values())
+                for cluster_id, r in cluster_tns.viewitems():
+                    # cluster_ws[cluster_id] = 2.0 / (1 + math.exp(-r / 2.0)) - 1.0
+                    cluster_ws[cluster_id] = float(r) / sum_r
+                
+                # propagate trust
+                prop_len = 3
+                if global_importance and cluster_ws:
+                    cluster_ws = self.propagate_trust(test_user, cluster_ws, cluster_trust, prop_len)
+            
+            # similarity value
+            cluster_ss = {}
+            rs = self.train2[test_user] if test_user in self.train2 else []
+            if rs: 
+                for cluster_id, centroid in centroids.viewitems():
+                    sim = self.similarity(centroid, rs)
+                    if not py.isnan(sim) and sim > 0:
+                        cluster_ss[cluster_id] = sim
+            
+            # local importance
+            total = 0
+            overlap = 0
+            local_weight = {}
+            if tns or rs:
+                for cluster_id in centroids.viewkeys():
+                    w = cluster_ws[cluster_id] if cluster_id in cluster_ws else 0
+                    s = cluster_ss[cluster_id] if cluster_id in cluster_ss else 0
+                    if w > 0 or s > 0:
+                            
+                        local_weight[cluster_id] = alpha * (slope * w + intercept) + (1 - alpha) * s
+                    
+                        if w > 0 and s > 0:
+                            # print s, 2 * w - 1, val
+                            overlap += 1
+                            trusts.append(w)
+                            sims.append(s)
+                            
+                        total += 1
+                if total > 0:
+                    cluster_overlaps.append(float(overlap) / total)
+            # predict item's rating
+            for test_item in test[test_user]:
+                truth = test[test_user][test_item]
+                
+                preds = []
+                weights = []
+                for cluster_id, centroid in centroids.viewitems():
+                    if test_item in centroid:
+                        lw = local_weight[cluster_id] if cluster_id in local_weight else 0
+                        
+                        if global_importance:
+                            gw = global_weight[cluster_id] if cluster_id in global_weight else 0
+                        else:
+                            gw = 0
                         # cluster weight
                         cw = beta * lw + (1 - beta) * gw
                         if cw > 0:
@@ -2033,14 +2449,30 @@ class SlopeOne(AbstractCF):
     def perform(self, train, test):
         '''http://www.serpentine.com/blog/2006/12/12/collaborative-filtering-made-easy/'''
         pass
+
+def test_math():
+    for i in range(20):
+        print i, 2.0 / (1 + math.exp(-i / 2.0)) - 1
+        print i, 2.0 / (1 + math.exp(-i / 3.0)) - 1
+        print i, 2.0 / (1 + math.exp(-i / 4.0)) - 1
+        print i, 2.0 / (1 + math.exp(-i / 5.0)) - 1
+        print i, 2.0 / (1 + math.exp(-i / 6.0)) - 1
     
+    
+    xs = [0.5, 0.6]
+    for x in xs:
+        for i in range(10):
+            y = 0.1 * i
+            print y, math.pow(x, 1 - y)   
+        
 def main():
+    
+    if not True: test_math()
+    
     config = load_config()
     AbstractCF.config = config
     
     methods = config['run.method'].lower().strip().split(',')
-    global method_label
-    method_label = '_'.join(methods)
     
     for method in methods:
         if method == 'cf':
@@ -2053,6 +2485,8 @@ def main():
             Trusties().execute()
         elif method == 'trusties2':
             Trusties2().execute()
+        elif method == 'trusties3':
+            Trusties3().execute()
         elif method == 'kmeans':
             KmeansCF().execute()
         elif method == 'kmtrust':

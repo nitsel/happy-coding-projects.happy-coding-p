@@ -3,7 +3,7 @@ Created on Feb 20, 2013
 
 @author: guoguibing
 '''
-import smtplib, os, socket
+import smtplib, os
 
 from email import encoders
 from email.mime.base import MIMEBase
