@@ -13,6 +13,7 @@ from data import Dataset
 from graph import Graph, Vertex, Edge
 import random, emailer
 from scipy import stats
+import copy
 
 cross_validation = 'cross_validation'
 leave_one_out = 'leave_one_out'
@@ -992,6 +993,225 @@ class Trusties(ClusterCF):
                 errors.append(error)
         self.errors = errors
 
+class KmedoidsCF(AbstractCF):
+    
+    def __init__(self):
+        self.method_id = 'Kmedoids CF'
+        
+    def prep_test(self, train, test=None):
+        
+        self.train = {user: train[user] for user in train if len(train[user]) >= self.cold_len or (user in self.trust and len(self.trust[user]) >= 5)} 
+        
+        return {user: test[user] for user in test if user in self.train}
+    
+    
+    def Kmedoids(self, train, K):
+        '''K-medoids clustering methods: http://en.wikipedia.org/wiki/K-medoids'''
+
+        print 'Start to cluster users by K-medoids...',
+        tol = 0.00001
+        
+        # cluster by sim, trust, or both
+        cluster_by = self.config['kmedoids.cluster.by']
+        
+        users = train.keys()
+        
+        # pre-compute user distance (rating similarity, social similarity) matrix
+        rating_dist = {} 
+        trust_dist = {}
+        alpha = 0.6
+        for u in users:
+            urs = train[u]
+            utn = self.trust[u] if u in self.trust else {}
+            for v in users:
+                if u == v: continue
+                
+                # reduce repeating computation since dist(u, v)=dist(v, u)
+                if v in rating_dist or v in trust_dist:
+                    computed = False
+                    
+                    if v in rating_dist and u in rating_dist[v]:
+                        sim_dist = rating_dist[v][u]
+                        
+                        user_dist = rating_dist[u] if u in rating_dist else {}
+                        user_dist[v] = sim_dist
+                        rating_dist[u] = user_dist
+                        computed = True
+                    
+                    if v in trust_dist and u in trust_dist[v]:
+                        tsim_dist = trust_dist[v][u]
+                        
+                        social_dist = trust_dist[u] if u in trust_dist else {}
+                        social_dist[v] = tsim_dist
+                        trust_dist[u] = social_dist
+                        computed = True
+                    
+                    if computed: continue
+                
+                # compute from scratch
+                vrs = train[v]
+                vtn = self.trust[v] if v in self.trust else {}
+                
+                # rating similarity
+                sim = self.similarity(urs, vrs)
+                if not py.isnan(sim):
+                    user_dist = rating_dist[u] if u in rating_dist else {}
+                    user_dist[v] = 1 - sim
+                    rating_dist[u] = user_dist
+                
+                # compute social similarity in 3 parts
+                if not utn: continue 
+                if not vtn: continue               
+                
+                # part 1: direct trust
+                trust = 1 if utn and v in utn else 0
+                
+                # part 2: overlapping trusted neighbors
+                cnt = 0
+                cnt_all = 0
+                for tn in vtn:
+                    if tn in utn:
+                        cnt += 1
+                cnt_all = len(utn) + len(vtn) - cnt
+                jaccard_index = float(cnt) / cnt_all
+                
+                # part 3: overall social distance
+                tsim = alpha * trust + (1 - alpha) * jaccard_index
+                social_dist = trust_dist[u] if u in trust_dist else {}
+                social_dist[v] = 1 - tsim
+                trust_dist[u] = social_dist
+        
+        random.seed(100)
+        
+        # initial k medoids
+        medoid_indices = random.sample(range(len(users)), K)
+        medoids = {k:users[index] for k, index in zip(range(K), medoid_indices)}
+        
+        iteration = 500
+        for i in range(iteration):
+            
+            '''Assignment step: associate each data point o to the closest medoid'''
+            
+            cluster_errors = {}
+            clusters = {}
+            for user in train:
+                min_dist = py.inf
+                cluster_id = -1
+                for c_id, medoid in medoids.viewitems():
+                    
+                    # the medoid point itself
+                    if user == medoid:
+                        min_dist = 0
+                        cluster_id = c_id
+                        break
+                    
+                    # other data points
+                    if cluster_by == 'sim':
+                        dist = rating_dist[user][medoid] if user in rating_dist and medoid in rating_dist[user] else py.nan
+    
+                    elif cluster_by == 'trust':
+                        dist = trust_dist[user][medoid] if user in trust_dist and medoid in trust_dist[user] else py.nan
+                    
+                    if not py.isnan(dist):
+                        if min_dist > dist:
+                            min_dist = dist
+                            cluster_id = c_id
+                
+                if cluster_id == -1: continue
+                
+                user_cluster = clusters[cluster_id] if cluster_id in clusters else []
+                user_cluster.append(user)
+                clusters[cluster_id] = user_cluster
+                
+                errors = cluster_errors[cluster_id] if cluster_id in cluster_errors else 0
+                errors += min_dist
+                cluster_errors[cluster_id] = errors
+            
+            
+            ''' Update step: for each medoid m and each data point o associated to m, 
+                swap m and o and compute the total cost of the configuration, 
+                that is, the average dissimilarity of o to all the data points associated to m. 
+                Select the medoid o with the lowest cost of the configuration.'''
+            
+            best_medoids = copy.deepcopy(medoids)
+            delta = 0
+            for cluster_id, cluster_ms in clusters.viewitems():
+                medoid = medoids[cluster_id]
+                last_errors = cluster_errors[cluster_id]
+                best_errors = last_errors
+                best_errors_medoid = medoid
+                
+                for m in cluster_ms:
+                    if m == medoid: continue
+                    
+                    new_medoid = m
+                    new_errors = 0
+                    for user in cluster_ms:
+                        if user == new_medoid: continue
+                        
+                        if cluster_by == 'sim':
+                            dist = rating_dist[user][new_medoid] if user in rating_dist and new_medoid in rating_dist[user] else py.nan
+        
+                        elif cluster_by == 'trust':
+                            dist = trust_dist[user][new_medoid] if user in trust_dist and new_medoid in trust_dist[user] else py.nan
+                        
+                        if not py.isnan(dist):
+                            new_errors += dist
+                    
+                    if new_errors < best_errors:
+                        best_errors = new_errors
+                        best_errors_medoid = new_medoid
+                
+                delta += (last_errors - best_errors)
+                best_medoids[cluster_id] = best_errors_medoid
+            
+            medoids = copy.deepcopy(best_medoids)
+            
+            if verbose: print 'iteration', (i + 1), 'delta =', delta
+            if delta < tol: 
+                break
+            
+        print 'Done!'
+        return clusters
+    
+    def cross_over(self, train, test):
+        K = int(self.config['kmeans.clusters'])
+        clusters = self.Kmedoids(train, K)
+        
+        errors = []
+        for test_user in test:
+            if test_user not in train:
+                continue     
+            
+            cluster_ms = []
+            for c_ms in clusters.viewvalues():
+                if test_user in c_ms:
+                    cluster_ms = [c_m for c_m in c_ms if c_m != test_user]
+                    break
+                
+            if not cluster_ms:
+                print 'cannot find the cluster for test user', test_user
+                
+            # compute user similarity
+            m_sims = {}
+            urs = train[test_user]
+            for m in cluster_ms:
+                mrs = train[m]
+                sim = self.similarity(urs, mrs)
+                if not py.isnan(sim) and sim > 0:
+                    m_sims[m] = sim
+            
+            for test_item in test[test_user]:
+                users = [m for m in m_sims.viewkeys() if test_item in train[m]]
+                rates = [train[m][test_item] for m in users]
+                ws = [m_sims[m] for m in users]
+                if rates:
+                    pred = py.average(rates, weights=ws)
+                    truth = test[test_user][test_item]
+                    error = abs(pred - truth)
+                    errors.append(error)
+        self.errors = errors
+        
 class KmeansCF(AbstractCF):
     def __init__(self):
         self.method_id = 'Kmeans CF'
@@ -1729,6 +1949,7 @@ class Trusties2(KmeansCF):
         cluster_trust = {}
         # genrate edges
         for c1, c1ms in clusters.viewitems(): 
+            if c1 == -1:continue
             cluster_rs = {}
             for c2, c2ms in clusters.viewitems(): 
                 # currently, we ignore the circular links
@@ -1806,6 +2027,25 @@ class Trusties2(KmeansCF):
                     cluster_ts[cluster] = py.average(edges, weights=nodes)
         
         return cluster_ts
+    
+    def get_wot(self, user):
+        wot = []
+        
+        current_list = [u for u in self.trust[user]]
+        next_list = []
+        
+        while current_list:
+            for u in current_list:
+                wot.append(u)
+                if u in self.trust:
+                    for v in self.trust[u]:
+                        if v == user:continue
+                        if v not in next_list and v not in current_list and v not in wot:
+                            next_list.append(v) 
+            current_list = [m for m in next_list]
+            next_list = []
+            
+        return wot
         
     def cross_over(self, train, test):
         
@@ -1887,13 +2127,11 @@ class Trusties2(KmeansCF):
                                 val = s
                             elif s == 0:
                                 val = 0
-                            elif w > 0.5 and s > 0.5:
-                                val = math.pow(s, 1 - w)
-                            else:
-                                val = 0
+                            elif w > 0 and s > 0:
+                                val = math.pow(s, 1 - w) if w > 0.5 and s > 0.5 else w * s
                         else:
                             val = 0
-                            
+
                         local_weight[cluster_id] = alpha * w + (1 - alpha) * val
                     
                         if w > 0 and s > 0:
@@ -1905,6 +2143,7 @@ class Trusties2(KmeansCF):
                     cluster_overlaps.append(float(overlap) / total)
             
             # predict item's rating
+            wot = self.get_wot(test_user)
             for test_item in test[test_user]:
                 truth = test[test_user][test_item]
                 
@@ -1925,10 +2164,11 @@ class Trusties2(KmeansCF):
                             rates = [train[m][test_item] for m in ms]
                             ws = []
                             for m in ms:
-                                if m in tns:
+                                if m in wot:
                                     ws.append(1.05)
                                 else:
                                     ws.append(1.0)
+                            if not rates: continue
                             pred = py.average(rates, weights=ws)
                             preds.append(pred)
                             weights.append(cw)
@@ -2495,6 +2735,8 @@ def main():
             KCF_1().execute()
         elif method == 'kcf-all':
             KCF_all().execute()
+        elif method == 'kmd-cf':
+            KmedoidsCF().execute()
         elif method == 'kmt-all':
             KMT_all().execute()
         elif method == 'kmt-1':
