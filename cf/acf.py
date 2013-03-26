@@ -1081,13 +1081,13 @@ class KmedoidsCF(AbstractCF):
                 social_dist[v] = 1 - tsim
                 trust_dist[u] = social_dist
         
-        random.seed(100)
+        #random.seed(100)
         
         # initial k medoids: randomly; implement other initialization methods -- ranked medoids
         medoid_indices = random.sample(range(len(users)), K)
         medoids = {k:users[index] for k, index in zip(range(K), medoid_indices)}
         
-        iteration = 500
+        iteration = 100
         deltas = {}
         deltas_stable_times = 0
         
@@ -1190,10 +1190,11 @@ class KmedoidsCF(AbstractCF):
         K = int(self.config['kmeans.clusters'])
         clusters = self.Kmedoids(train, K)
         
+        self.results += ',' + self.config['kmedoids.cluster.by']
+        
         errors = []
         for test_user in test:
-            if test_user not in train:
-                continue     
+            if test_user not in train: continue     
             
             cluster_ms = []
             for c_ms in clusters.viewvalues():
@@ -1203,6 +1204,7 @@ class KmedoidsCF(AbstractCF):
                 
             if not cluster_ms:
                 print 'cannot find the cluster for test user', test_user
+                continue
                 
             # compute user similarity
             m_sims = {}
