@@ -1083,11 +1083,14 @@ class KmedoidsCF(AbstractCF):
         
         random.seed(100)
         
-        # initial k medoids
+        # initial k medoids: randomly; implement other initialization methods -- ranked medoids
         medoid_indices = random.sample(range(len(users)), K)
         medoids = {k:users[index] for k, index in zip(range(K), medoid_indices)}
         
         iteration = 500
+        deltas = {}
+        deltas_stable_times = 0
+        
         for i in range(iteration):
             
             '''Assignment step: associate each data point o to the closest medoid'''
@@ -1167,9 +1170,18 @@ class KmedoidsCF(AbstractCF):
             
             medoids = copy.deepcopy(best_medoids)
             
+            deltas[i % 4] = delta
+            
             if verbose: print 'iteration', (i + 1), 'delta =', delta
             if delta < tol: 
                 break
+            if len(deltas) == 4:
+                odd_delta = deltas[0] - deltas[2]
+                even_delta = deltas[1] - deltas[3]
+                if odd_delta == 0 and even_delta == 0:
+                    deltas_stable_times += 1
+                if deltas_stable_times >= 4 and delta == min(deltas.values()):
+                    break
             
         print 'Done!'
         return clusters
