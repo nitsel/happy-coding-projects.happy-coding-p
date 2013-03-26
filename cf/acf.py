@@ -14,6 +14,7 @@ from graph import Graph, Vertex, Edge
 import random, emailer
 from scipy import stats
 import copy
+from _abcoll import Set
 
 cross_validation = 'cross_validation'
 leave_one_out = 'leave_one_out'
@@ -1020,6 +1021,7 @@ class KmedoidsCF(AbstractCF):
         rating_dist = {} 
         trust_dist = {}
         alpha = 0.6
+        self.alpha = alpha
         for u in users:
             urs = train[u]
             utn = self.trust[u] if u in self.trust else {}
@@ -1081,7 +1083,7 @@ class KmedoidsCF(AbstractCF):
                 social_dist[v] = 1 - tsim
                 trust_dist[u] = social_dist
         
-        #random.seed(100)
+        # random.seed(100)
         
         # initial k medoids: randomly; implement other initialization methods -- ranked medoids
         medoid_indices = random.sample(range(len(users)), K)
@@ -1187,10 +1189,14 @@ class KmedoidsCF(AbstractCF):
         return clusters
     
     def cross_over(self, train, test):
-        K = int(self.config['kmeans.clusters'])
-        clusters = self.Kmedoids(train, K)
+        # K = int(self.config['kmeans.clusters'])
+        clusters = self.Kmedoids(train, self.n_clusters)
         
-        self.results += ',' + self.config['kmedoids.cluster.by']
+        cluster_by = self.config['kmedoids.cluster.by']
+        self.results += ',' + cluster_by + ',' + str(self.n_clusters)
+        
+        if cluster_by == 'trust':
+            self.results += ',' + str(self.alpha)
         
         errors = []
         for test_user in test:
@@ -1219,6 +1225,330 @@ class KmedoidsCF(AbstractCF):
                 users = [m for m in m_sims.viewkeys() if test_item in train[m]]
                 rates = [train[m][test_item] for m in users]
                 ws = [m_sims[m] for m in users]
+                if rates:
+                    pred = py.average(rates, weights=ws)
+                    truth = test[test_user][test_item]
+                    error = abs(pred - truth)
+                    errors.append(error)
+        self.errors = errors
+
+class MultiViewKmedoidsCF(KmedoidsCF):
+    
+    def __init__(self):
+        self.method_id = 'Multiview Kmedoids CF'
+        
+    def Multiview_Kmedoids(self, train, K):
+        '''Multiview K-medoids clustering methods, refers to paper --- Multi-View Clustering
+        
+        ------------------
+        view 1: similarity; view 2: social trust'''
+
+        print 'Start to cluster users by Multi-View K-medoids clustering ...',
+        tol = 0.00001
+        
+        users = train.keys()
+        
+        # pre-compute user distance (rating similarity, social similarity) matrix
+        rating_dist = {} 
+        trust_dist = {}
+        alpha = 0
+        self.alpha = alpha
+        for u in users:
+            urs = train[u]
+            utn = self.trust[u] if u in self.trust else {}
+            for v in users:
+                if u == v: continue
+                
+                # reduce repeating computation since dist(u, v)=dist(v, u)
+                if v in rating_dist or v in trust_dist:
+                    computed = False
+                    
+                    if v in rating_dist and u in rating_dist[v]:
+                        sim_dist = rating_dist[v][u]
+                        
+                        user_dist = rating_dist[u] if u in rating_dist else {}
+                        user_dist[v] = sim_dist
+                        rating_dist[u] = user_dist
+                        computed = True
+                    
+                    if v in trust_dist and u in trust_dist[v]:
+                        tsim_dist = trust_dist[v][u]
+                        
+                        social_dist = trust_dist[u] if u in trust_dist else {}
+                        social_dist[v] = tsim_dist
+                        trust_dist[u] = social_dist
+                        computed = True
+                    
+                    if computed: continue
+                
+                # compute from scratch
+                vrs = train[v]
+                vtn = self.trust[v] if v in self.trust else {}
+                
+                # rating similarity
+                sim = self.similarity(urs, vrs)
+                if not py.isnan(sim):
+                    user_dist = rating_dist[u] if u in rating_dist else {}
+                    user_dist[v] = 1 - sim
+                    rating_dist[u] = user_dist
+                
+                # compute social similarity in 3 parts
+                if not utn: continue 
+                if not vtn: continue               
+                
+                # part 1: direct trust
+                trust = 1 if utn and v in utn else 0
+                
+                # part 2: overlapping trusted neighbors
+                cnt = 0
+                cnt_all = 0
+                for tn in vtn:
+                    if tn in utn:
+                        cnt += 1
+                cnt_all = len(utn) + len(vtn) - cnt
+                jaccard_index = float(cnt) / cnt_all
+                
+                # part 3: overall social distance
+                tsim = alpha * trust + (1 - alpha) * jaccard_index
+                social_dist = trust_dist[u] if u in trust_dist else {}
+                social_dist[v] = 1 - tsim
+                trust_dist[u] = social_dist
+        
+        self.rating_dist = rating_dist
+        self.trust_dist = trust_dist
+        
+        random.seed(500)
+        
+        # initial k medoids for view 2
+        medoid_indices = random.sample(range(len(users)), K)
+        trust_medoids = {k:users[index] for k, index in zip(range(K), medoid_indices)}
+        
+        '''E-step for view 2: associate each data point o to the closest medoid'''
+        trust_clusters = {}
+        for user in train:
+            min_dist = py.inf
+            cluster_id = -1
+            for c_id, medoid in trust_medoids.viewitems():
+                
+                # the medoid point itself
+                if user == medoid:
+                    min_dist = 0
+                    cluster_id = c_id
+                    break
+                
+                dist = trust_dist[user][medoid] if user in trust_dist and medoid in trust_dist[user] else py.nan
+                
+                if not py.isnan(dist):
+                    if min_dist > dist:
+                        min_dist = dist
+                        cluster_id = c_id
+            
+            if cluster_id == -1: continue
+            
+            user_cluster = trust_clusters[cluster_id] if cluster_id in trust_clusters else []
+            user_cluster.append(user)
+            trust_clusters[cluster_id] = user_cluster
+            
+        iteration = 100
+        deltas = {}
+        deltas_stable_times = 0
+        
+        for t in range(0, 2 * iteration, 2):
+            
+            for v in range(2):
+                if v == 0:
+                    '''M-step for view 1: for each medoid m and each data point o associated to m, 
+                        swap m and o and compute the total cost of the configuration, 
+                        that is, the average dissimilarity of o to all the data points associated to m. 
+                        Select the medoid o with the lowest cost of the configuration.'''
+                    
+                    sim_medoids = copy.deepcopy(trust_medoids)
+                    sim_delta = 0
+                    for cluster_id, cluster_ms in trust_clusters.viewitems():
+                        medoid = trust_medoids[cluster_id]
+                        
+                        # compute last errors based on this medoid
+                        last_errors = 0
+                        for user in cluster_ms:
+                            if user == medoid: continue
+                            dist = rating_dist[user][medoid] if user in rating_dist and medoid in rating_dist[user] else py.nan
+                            if not py.isnan(dist):
+                                last_errors += dist
+                        
+                        best_errors = last_errors
+                        best_errors_medoid = medoid
+                        
+                        # compute total cost by using other users in the clusters
+                        for m in cluster_ms:
+                            if m == medoid: continue
+                            
+                            new_medoid = m
+                            new_errors = 0
+                            for user in cluster_ms:
+                                if user == new_medoid: continue
+                                dist = rating_dist[user][new_medoid] if user in rating_dist and new_medoid in rating_dist[user] else py.nan
+                                if not py.isnan(dist):
+                                    new_errors += dist
+                            
+                            if new_errors < best_errors:
+                                best_errors = new_errors
+                                best_errors_medoid = new_medoid
+                        
+                        sim_delta += (last_errors - best_errors)
+                        sim_medoids[cluster_id] = best_errors_medoid
+                    
+                    '''E-step for view 1: associate each data point o to the closest medoid'''
+                    if sim_delta == 0: continue  # no need to re-associate as it becomes stable
+                    sim_clusters = {}
+                    for user in train:
+                        min_dist = py.inf
+                        cluster_id = -1
+                        for c_id, medoid in sim_medoids.viewitems():
+                            
+                            # the medoid point itself
+                            if user == medoid:
+                                min_dist = 0
+                                cluster_id = c_id
+                                break
+                            
+                            dist = rating_dist[user][medoid] if user in rating_dist and medoid in rating_dist[user] else py.nan
+                            
+                            if not py.isnan(dist):
+                                if min_dist > dist:
+                                    min_dist = dist
+                                    cluster_id = c_id
+                        
+                        if cluster_id == -1: continue
+                        
+                        user_cluster = sim_clusters[cluster_id] if cluster_id in sim_clusters else []
+                        user_cluster.append(user)
+                        sim_clusters[cluster_id] = user_cluster
+                        
+                elif v == 1:
+                    '''M-step for view 2: for each medoid m and each data point o associated to m, 
+                        swap m and o and compute the total cost of the configuration, 
+                        that is, the average dissimilarity of o to all the data points associated to m. 
+                        Select the medoid o with the lowest cost of the configuration.'''
+                    
+                    trust_medoids = copy.deepcopy(sim_medoids)
+                    trust_delta = 0
+                    for cluster_id, cluster_ms in sim_clusters.viewitems():
+                        medoid = sim_medoids[cluster_id]
+                        
+                        # compute last errors based on this medoid
+                        last_errors = 0
+                        for user in cluster_ms:
+                            if user == medoid: continue
+                            dist = trust_dist[user][medoid] if user in trust_dist and medoid in trust_dist[user] else py.nan
+                            if not py.isnan(dist):
+                                last_errors += dist
+                        
+                        best_errors = last_errors
+                        best_errors_medoid = medoid
+                        
+                        # compute total cost by using other users in the clusters
+                        for m in cluster_ms:
+                            if m == medoid: continue
+                            
+                            new_medoid = m
+                            new_errors = 0
+                            for user in cluster_ms:
+                                if user == new_medoid: continue
+                                dist = trust_dist[user][new_medoid] if user in trust_dist and new_medoid in trust_dist[user] else py.nan
+                                if not py.isnan(dist):
+                                    new_errors += dist
+                            
+                            if new_errors < best_errors:
+                                best_errors = new_errors
+                                best_errors_medoid = new_medoid
+                        
+                        trust_delta += (last_errors - best_errors)
+                        trust_medoids[cluster_id] = best_errors_medoid
+                    
+                    '''E-step for view 2: associate each data point o to the closest medoid'''
+                    if trust_delta == 0: continue
+                    trust_clusters = {}
+                    for user in train:
+                        min_dist = py.inf
+                        cluster_id = -1
+                        for c_id, medoid in trust_medoids.viewitems():
+                            
+                            # the medoid point itself
+                            if user == medoid:
+                                min_dist = 0
+                                cluster_id = c_id
+                                break
+                            
+                            dist = trust_dist[user][medoid] if user in trust_dist and medoid in trust_dist[user] else py.nan
+                            
+                            if not py.isnan(dist):
+                                if min_dist > dist:
+                                    min_dist = dist
+                                    cluster_id = c_id
+                        
+                        if cluster_id == -1: continue
+                        
+                        user_cluster = trust_clusters[cluster_id] if cluster_id in trust_clusters else []
+                        user_cluster.append(user)
+                        trust_clusters[cluster_id] = user_cluster
+            
+            delta = sim_delta + trust_delta
+            deltas[t % 4] = delta
+            
+            if verbose: print 'iteration', (t + 1), 'delta =', delta
+            if delta < tol: 
+                break
+            if len(deltas) == 4:
+                odd_delta = deltas[0] - deltas[2]
+                even_delta = deltas[1] - deltas[3]
+                if odd_delta == 0 and even_delta == 0:
+                    deltas_stable_times += 1
+                if deltas_stable_times >= 4 and delta == min(deltas.values()):
+                    break
+            
+        print 'Done!'
+        
+        clusters = {}
+        for k in range(K):
+            nns = set(sim_clusters[k]) | set(trust_clusters[k])
+            clusters[k] = [nn for nn in nns]
+            
+        return clusters
+    
+    def cross_over(self, train, test):
+        clusters = self.Multiview_Kmedoids(train, self.n_clusters)
+        
+        cluster_by = self.config['kmedoids.cluster.by']
+        self.results += ',' + cluster_by + ',' + str(self.n_clusters)
+        
+        if cluster_by == 'trust':
+            self.results += ',' + str(self.alpha)
+        
+        errors = []
+        for test_user in test:
+            if test_user not in train: continue     
+            
+            cluster_ms = []
+            for c_ms in clusters.viewvalues():
+                if test_user in c_ms:
+                    cluster_ms = [c_m for c_m in c_ms if c_m != test_user]
+                    break
+                
+            if not cluster_ms:
+                print 'cannot find the cluster for test user', test_user
+                continue
+                
+            for test_item in test[test_user]:
+                users = [m for m in cluster_ms if test_item in train[m]]
+                rates = []
+                ws = []
+                for m in users:
+                    sim = 1 - self.rating_dist[test_user][m] if test_user in self.rating_dist and m in self.rating_dist[test_user] else py.nan
+                    if not py.isnan(sim) and sim > 0:
+                        t = 1 - self.trust_dist[test_user][m] if test_user in self.trust_dist and m in self.trust_dist[test_user] else 0
+                        
+                        rates.append(train[m][test_item])
+                        ws.append(math.pow(sim, 1 - t))
                 if rates:
                     pred = py.average(rates, weights=ws)
                     truth = test[test_user][test_item]
@@ -2751,6 +3081,8 @@ def main():
             KCF_all().execute()
         elif method == 'kmd-cf':
             KmedoidsCF().execute()
+        elif method == 'kmv-cf':
+            MultiViewKmedoidsCF().execute()
         elif method == 'kmt-all':
             KMT_all().execute()
         elif method == 'kmt-1':
