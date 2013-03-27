@@ -997,7 +997,11 @@ class Trusties(ClusterCF):
 class KmedoidsCF(AbstractCF):
     
     def __init__(self):
-        self.method_id = 'Kmedoids CF'
+        self.cluster_by = self.config['kmedoids.cluster.by']
+        self.method_id = 'Kmedoids ' + self.cluster_by
+        
+        self.alpha = float(self.config['kmedoids.alpha'])
+        self.trust_len = int(self.config['trust.propagation.len'])
         
     def prep_test(self, train, test=None):
         
@@ -1005,23 +1009,29 @@ class KmedoidsCF(AbstractCF):
         
         return {user: test[user] for user in test if user in self.train}
     
-    
-    def Kmedoids(self, train, K):
-        '''K-medoids clustering methods: http://en.wikipedia.org/wiki/K-medoids'''
-
-        print 'Start to cluster users by K-medoids...',
-        tol = 0.00001
+    def trust_distance(self, current_depth_users, trustee, depth=0, visited_users=[]):
+        ''' calculate the distance between trustor and trustee, if trustee not in the WOT of trustor, return -1, using breath first searching 
+        '''
+        if not current_depth_users: return -1
         
-        # cluster by sim, trust, or both
-        cluster_by = self.config['kmedoids.cluster.by']
+        depth += 1
+        if trustee in current_depth_users: 
+            return depth
+        else:
+            visited_users.extend(current_depth_users)
+            
+            next_depth_users = []
+            trustees = [self.trust[tn].keys() for tn in current_depth_users if tn in self.trust]
+            for n in trustees:
+                next_depth_users.extend([x for x in n if x not in visited_users])
+            
+            return self.trust_distance(next_depth_users, trustee, depth, visited_users)
         
-        users = train.keys()
-        
-        # pre-compute user distance (rating similarity, social similarity) matrix
+    def user_dists(self, train):
         rating_dist = {} 
         trust_dist = {}
-        alpha = 0.6
-        self.alpha = alpha
+        users = train.keys()
+        
         for u in users:
             urs = train[u]
             utn = self.trust[u] if u in self.trust else {}
@@ -1066,7 +1076,8 @@ class KmedoidsCF(AbstractCF):
                 if not vtn: continue               
                 
                 # part 1: direct trust
-                trust = 1 if utn and v in utn else 0
+                d = self.trust_distance(utn, v)
+                trust = 1.0 / d if d > 0 else 0                
                 
                 # part 2: overlapping trusted neighbors
                 cnt = 0
@@ -1075,17 +1086,35 @@ class KmedoidsCF(AbstractCF):
                     if tn in utn:
                         cnt += 1
                 cnt_all = len(utn) + len(vtn) - cnt
-                jaccard_index = float(cnt) / cnt_all
+                jaccard = float(cnt) / cnt_all
                 
                 # part 3: overall social distance
-                tsim = alpha * trust + (1 - alpha) * jaccard_index
+                tsim = self.alpha * trust + (1 - self.alpha) * jaccard
                 social_dist = trust_dist[u] if u in trust_dist else {}
                 social_dist[v] = 1 - tsim
                 trust_dist[u] = social_dist
         
+        self.rating_dist = rating_dist
+        self.trust_dist = trust_dist 
+        
+        return rating_dist, trust_dist
+    
+    def Kmedoids(self, train, K):
+        '''K-medoids clustering methods: http://en.wikipedia.org/wiki/K-medoids'''
+
+        print 'Start to cluster users by K-medoids...'
+        tol = 0.00001
+        
+        # cluster by sim, trust, or both
+        cluster_by = self.cluster_by
+        users = train.keys()
+        
+        '''Pre-processing: pre-compute user distance (rating similarity, social similarity) matrix '''
+        rating_dist, trust_dist = self.user_dists(train)
+        
         # random.seed(100)
         
-        # initial k medoids: randomly; implement other initialization methods -- ranked medoids
+        '''Initialization: initial k medoids: randomly; implement other initialization methods -- ranked medoids'''
         medoid_indices = random.sample(range(len(users)), K)
         medoids = {k:users[index] for k, index in zip(range(K), medoid_indices)}
         
@@ -1096,7 +1125,6 @@ class KmedoidsCF(AbstractCF):
         for i in range(iteration):
             
             '''Assignment step: associate each data point o to the closest medoid'''
-            
             cluster_errors = {}
             clusters = {}
             for user in train:
@@ -1189,14 +1217,10 @@ class KmedoidsCF(AbstractCF):
         return clusters
     
     def cross_over(self, train, test):
-        # K = int(self.config['kmeans.clusters'])
+        
         clusters = self.Kmedoids(train, self.n_clusters)
         
-        cluster_by = self.config['kmedoids.cluster.by']
-        self.results += ',' + cluster_by + ',' + str(self.n_clusters)
-        
-        if cluster_by == 'trust':
-            self.results += ',' + str(self.alpha)
+        self.results += ',' + self.cluster_by + ',' + str(self.n_clusters) + (',' + str(self.alpha) if self.cluster_by == 'trust' else '')
         
         errors = []
         for test_user in test:
@@ -1212,19 +1236,19 @@ class KmedoidsCF(AbstractCF):
                 print 'cannot find the cluster for test user', test_user
                 continue
                 
-            # compute user similarity
-            m_sims = {}
-            urs = train[test_user]
-            for m in cluster_ms:
-                mrs = train[m]
-                sim = self.similarity(urs, mrs)
-                if not py.isnan(sim) and sim > 0:
-                    m_sims[m] = sim
-            
             for test_item in test[test_user]:
-                users = [m for m in m_sims.viewkeys() if test_item in train[m]]
-                rates = [train[m][test_item] for m in users]
-                ws = [m_sims[m] for m in users]
+                candidates = [m for m in cluster_ms if test_item in train[m]]
+                
+                rates = []
+                ws = []
+                for v in candidates:
+                    '''no matter clustered by sim or trust, for prediction, all based on similarity value'''
+                    sim = 1 - self.rating_dist[test_user][v] if test_user in self.rating_dist and v in self.rating_dist[test_user] else py.nan
+                    
+                    if not py.isnan(sim) and sim > 0.0:
+                        rates.append(train[v][test_item])
+                        ws.append(sim)
+                
                 if rates:
                     pred = py.average(rates, weights=ws)
                     truth = test[test_user][test_item]
@@ -1235,91 +1259,27 @@ class KmedoidsCF(AbstractCF):
 class MultiViewKmedoidsCF(KmedoidsCF):
     
     def __init__(self):
+        KmedoidsCF.__init__()
         self.method_id = 'Multiview Kmedoids CF'
+        self.beta = float(self.config['multiview.trust.factor'])
         
     def Multiview_Kmedoids(self, train, K):
         '''Multiview K-medoids clustering methods, refers to paper --- Multi-View Clustering
         
-        ------------------
+        --------------------------
         view 1: similarity; view 2: social trust'''
 
-        print 'Start to cluster users by Multi-View K-medoids clustering ...',
-        tol = 0.00001
+        print 'Start to cluster users by Multi-View K-medoids clustering ...'
         
+        tol = 0.00001
         users = train.keys()
         
-        # pre-compute user distance (rating similarity, social similarity) matrix
-        rating_dist = {} 
-        trust_dist = {}
-        alpha = 0
-        self.alpha = alpha
-        for u in users:
-            urs = train[u]
-            utn = self.trust[u] if u in self.trust else {}
-            for v in users:
-                if u == v: continue
-                
-                # reduce repeating computation since dist(u, v)=dist(v, u)
-                if v in rating_dist or v in trust_dist:
-                    computed = False
-                    
-                    if v in rating_dist and u in rating_dist[v]:
-                        sim_dist = rating_dist[v][u]
-                        
-                        user_dist = rating_dist[u] if u in rating_dist else {}
-                        user_dist[v] = sim_dist
-                        rating_dist[u] = user_dist
-                        computed = True
-                    
-                    if v in trust_dist and u in trust_dist[v]:
-                        tsim_dist = trust_dist[v][u]
-                        
-                        social_dist = trust_dist[u] if u in trust_dist else {}
-                        social_dist[v] = tsim_dist
-                        trust_dist[u] = social_dist
-                        computed = True
-                    
-                    if computed: continue
-                
-                # compute from scratch
-                vrs = train[v]
-                vtn = self.trust[v] if v in self.trust else {}
-                
-                # rating similarity
-                sim = self.similarity(urs, vrs)
-                if not py.isnan(sim):
-                    user_dist = rating_dist[u] if u in rating_dist else {}
-                    user_dist[v] = 1 - sim
-                    rating_dist[u] = user_dist
-                
-                # compute social similarity in 3 parts
-                if not utn: continue 
-                if not vtn: continue               
-                
-                # part 1: direct trust
-                trust = 1 if utn and v in utn else 0
-                
-                # part 2: overlapping trusted neighbors
-                cnt = 0
-                cnt_all = 0
-                for tn in vtn:
-                    if tn in utn:
-                        cnt += 1
-                cnt_all = len(utn) + len(vtn) - cnt
-                jaccard_index = float(cnt) / cnt_all
-                
-                # part 3: overall social distance
-                tsim = alpha * trust + (1 - alpha) * jaccard_index
-                social_dist = trust_dist[u] if u in trust_dist else {}
-                social_dist[v] = 1 - tsim
-                trust_dist[u] = social_dist
-        
-        self.rating_dist = rating_dist
-        self.trust_dist = trust_dist
+        '''Pre-processing: pre-compute user distance (rating similarity, social similarity) matrix '''
+        rating_dist, trust_dist = self.user_dists(train)
         
         random.seed(500)
         
-        # initial k medoids for view 2
+        '''Initialization: initial k medoids for view 2, i.e. trust, what if we start with view 1: sim?'''
         medoid_indices = random.sample(range(len(users)), K)
         trust_medoids = {k:users[index] for k, index in zip(range(K), medoid_indices)}
         
@@ -1398,7 +1358,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                         sim_medoids[cluster_id] = best_errors_medoid
                     
                     '''E-step for view 1: associate each data point o to the closest medoid'''
-                    if sim_delta == 0: continue  # no need to re-associate as it becomes stable
+                    if t > 0 and sim_delta == 0: continue  # no need to re-associate as it becomes stable, but also need to ensure sim_clusters exist
                     sim_clusters = {}
                     for user in train:
                         min_dist = py.inf
@@ -1466,7 +1426,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                         trust_medoids[cluster_id] = best_errors_medoid
                     
                     '''E-step for view 2: associate each data point o to the closest medoid'''
-                    if trust_delta == 0: continue
+                    if t > 0 and trust_delta == 0: continue
                     trust_clusters = {}
                     for user in train:
                         min_dist = py.inf
@@ -1508,51 +1468,47 @@ class MultiViewKmedoidsCF(KmedoidsCF):
             
         print 'Done!'
         
-        clusters = {}
-        for k in range(K):
-            nns = set(sim_clusters[k]) | set(trust_clusters[k])
-            clusters[k] = [nn for nn in nns]
-            
-        return clusters
+        return {k: list(set(sim_clusters[k]) | set(trust_clusters[k])) for k in range(K)}
     
     def cross_over(self, train, test):
+        
         clusters = self.Multiview_Kmedoids(train, self.n_clusters)
         
-        cluster_by = self.config['kmedoids.cluster.by']
-        self.results += ',' + cluster_by + ',' + str(self.n_clusters)
-        
-        if cluster_by == 'trust':
-            self.results += ',' + str(self.alpha)
+        self.results += ',' + self.cluster_by + ',' + str(self.n_clusters) + ',' + str(self.alpha) + ',' + str(self.beta)
         
         errors = []
         for test_user in test:
             if test_user not in train: continue     
             
-            cluster_ms = []
-            for c_ms in clusters.viewvalues():
+            # it is possible that one user occurs in two clusters
+            cluster_ids = [] 
+            for c_id, c_ms in clusters.viewitems():
                 if test_user in c_ms:
-                    cluster_ms = [c_m for c_m in c_ms if c_m != test_user]
-                    break
+                    cluster_ids.append(c_id)
                 
-            if not cluster_ms:
+            if not cluster_ids:
                 print 'cannot find the cluster for test user', test_user
                 continue
                 
             for test_item in test[test_user]:
-                users = [m for m in cluster_ms if test_item in train[m]]
-                rates = []
-                ws = []
-                for m in users:
-                    sim = 1 - self.rating_dist[test_user][m] if test_user in self.rating_dist and m in self.rating_dist[test_user] else py.nan
-                    if not py.isnan(sim) and sim > 0:
-                        t = 1 - self.trust_dist[test_user][m] if test_user in self.trust_dist and m in self.trust_dist[test_user] else 0
-                        
-                        rates.append(train[m][test_item])
-                        ws.append(math.pow(sim, 1 - t))
-                if rates:
-                    pred = py.average(rates, weights=ws)
+                preds = []
+                for cluster_id in cluster_ids:
+                    candidates = [m for m in clusters[cluster_id] if m != test_user and test_item in train[m]]
+                    rates = []
+                    ws = []
+                    for m in candidates:
+                        sim = 1 - self.rating_dist[test_user][m] if test_user in self.rating_dist and m in self.rating_dist[test_user] else py.nan
+                        if not py.isnan(sim) and sim > 0:
+                            t = 1 - self.trust_dist[test_user][m] if test_user in self.trust_dist and m in self.trust_dist[test_user] else 0
+                            
+                            rates.append(train[m][test_item])
+                            ws.append(math.pow(sim, 1 - self.beta * t))
+                    if rates:
+                        pred = py.average(rates, weights=ws)
+                        preds.append(pred)
+                if preds:
                     truth = test[test_user][test_item]
-                    error = abs(pred - truth)
+                    error = abs(py.mean(preds) - truth)
                     errors.append(error)
         self.errors = errors
         
@@ -3079,9 +3035,9 @@ def main():
             KCF_1().execute()
         elif method == 'kcf-all':
             KCF_all().execute()
-        elif method == 'kmd-cf':
+        elif method == 'kmedoids':
             KmedoidsCF().execute()
-        elif method == 'kmv-cf':
+        elif method == 'mv_kmedoids':
             MultiViewKmedoidsCF().execute()
         elif method == 'kmt-all':
             KMT_all().execute()
