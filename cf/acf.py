@@ -1285,13 +1285,13 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         '''Pre-processing: pre-compute user distance (rating similarity, social similarity) matrix '''
         rating_dist, trust_dist = self.user_dists(train)
         
-        random.seed(500)
+        # random.seed(500)
         
         '''Initialization: initial k medoids for view 2, i.e. trust, what if we start with view 1: sim?'''
         medoid_indices = random.sample(range(len(users)), K)
         
         '''E-step for view 2: associate each data point o to the closest medoid'''
-        start_with_trust = True
+        start_with_trust = not True
         if start_with_trust:
             
             trust_medoids = {k:users[index] for k, index in zip(range(K), medoid_indices)}
