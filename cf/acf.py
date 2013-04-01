@@ -14,7 +14,6 @@ from graph import Graph, Vertex, Edge
 import random, emailer
 from scipy import stats
 import copy
-from _abcoll import Set
 
 cross_validation = 'cross_validation'
 leave_one_out = 'leave_one_out'
@@ -998,10 +997,12 @@ class KmedoidsCF(AbstractCF):
     
     def __init__(self):
         self.cluster_by = self.config['kmedoids.cluster.by']
-        self.method_id = 'Kmedoids ' + self.cluster_by
+        self.method_id = 'Kmedoids'
         
         self.alpha = float(self.config['kmedoids.alpha'])
         self.trust_len = int(self.config['trust.propagation.len'])
+        
+        self.max_depth = int(self.config['kmedoids.trust.max_depth'])
         
     def prep_test(self, train, test=None):
         
@@ -1009,23 +1010,29 @@ class KmedoidsCF(AbstractCF):
         
         return {user: test[user] for user in test if user in self.train}
     
-    def trust_distance(self, current_depth_users, trustee, depth=0, visited_users=[]):
+    def trust_distance(self, source, trustee, max_depth=2):
         ''' calculate the distance between trustor and trustee, if trustee not in the WOT of trustor, return -1, using breath first searching 
         '''
-        if not current_depth_users: return -1
+        visited_users = []
+        visited_users.append(source)
+        depth_users = self.trust[source] if source in self.trust else []
+        if not depth_users: return -1
         
-        depth += 1
-        if trustee in current_depth_users: 
-            return depth
-        else:
-            visited_users.extend(current_depth_users)
+        depth = 0
+        while depth < max_depth:
+            depth += 1
+            if trustee in depth_users: return depth
+            visited_users.extend(depth_users)
             
-            next_depth_users = []
-            trustees = [self.trust[tn].keys() for tn in current_depth_users if tn in self.trust]
+            next_depth_users = []            
+            trustees = [self.trust[tn].keys() for tn in depth_users if tn in self.trust]
             for n in trustees:
                 next_depth_users.extend([x for x in n if x not in visited_users])
             
-            return self.trust_distance(next_depth_users, trustee, depth, visited_users)
+            depth_users = next_depth_users[:]
+            if not depth_users: break
+            
+        return -1   
         
     def user_dists(self, train):
         rating_dist = {} 
@@ -1076,7 +1083,8 @@ class KmedoidsCF(AbstractCF):
                 if not vtn: continue               
                 
                 # part 1: direct trust
-                d = self.trust_distance(utn, v)
+                d = self.trust_distance(u, v, self.max_depth)
+                #if d > 0: print u, v, d
                 trust = 1.0 / d if d > 0 else 0                
                 
                 # part 2: overlapping trusted neighbors
@@ -1259,7 +1267,7 @@ class KmedoidsCF(AbstractCF):
 class MultiViewKmedoidsCF(KmedoidsCF):
     
     def __init__(self):
-        KmedoidsCF.__init__()
+        KmedoidsCF.__init__(self)
         self.method_id = 'Multiview Kmedoids CF'
         self.beta = float(self.config['multiview.trust.factor'])
         
@@ -1281,33 +1289,63 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         
         '''Initialization: initial k medoids for view 2, i.e. trust, what if we start with view 1: sim?'''
         medoid_indices = random.sample(range(len(users)), K)
-        trust_medoids = {k:users[index] for k, index in zip(range(K), medoid_indices)}
         
         '''E-step for view 2: associate each data point o to the closest medoid'''
-        trust_clusters = {}
-        for user in train:
-            min_dist = py.inf
-            cluster_id = -1
-            for c_id, medoid in trust_medoids.viewitems():
-                
-                # the medoid point itself
-                if user == medoid:
-                    min_dist = 0
-                    cluster_id = c_id
-                    break
-                
-                dist = trust_dist[user][medoid] if user in trust_dist and medoid in trust_dist[user] else py.nan
-                
-                if not py.isnan(dist):
-                    if min_dist > dist:
-                        min_dist = dist
+        start_with_trust = True
+        if start_with_trust:
+            
+            trust_medoids = {k:users[index] for k, index in zip(range(K), medoid_indices)}
+            trust_clusters = {}
+            for user in train:
+                min_dist = py.inf
+                cluster_id = -1
+                for c_id, medoid in trust_medoids.viewitems():
+                    
+                    # the medoid point itself
+                    if user == medoid:
+                        min_dist = 0
                         cluster_id = c_id
-            
-            if cluster_id == -1: continue
-            
-            user_cluster = trust_clusters[cluster_id] if cluster_id in trust_clusters else []
-            user_cluster.append(user)
-            trust_clusters[cluster_id] = user_cluster
+                        break
+                    
+                    dist = trust_dist[user][medoid] if user in trust_dist and medoid in trust_dist[user] else py.nan
+                    
+                    if not py.isnan(dist):
+                        if min_dist > dist:
+                            min_dist = dist
+                            cluster_id = c_id
+                
+                if cluster_id == -1: continue
+                
+                user_cluster = trust_clusters[cluster_id] if cluster_id in trust_clusters else []
+                user_cluster.append(user)
+                trust_clusters[cluster_id] = user_cluster
+        
+        else:
+            sim_medoids = {k:users[index] for k, index in zip(range(K), medoid_indices)}
+            sim_clusters = {}
+            for user in train:
+                min_dist = py.inf
+                cluster_id = -1
+                for c_id, medoid in sim_medoids.viewitems():
+                    
+                    # the medoid point itself
+                    if user == medoid:
+                        min_dist = 0
+                        cluster_id = c_id
+                        break
+                    
+                    dist = rating_dist[user][medoid] if user in rating_dist and medoid in rating_dist[user] else py.nan
+                    
+                    if not py.isnan(dist):
+                        if min_dist > dist:
+                            min_dist = dist
+                            cluster_id = c_id
+                
+                if cluster_id == -1: continue
+                
+                user_cluster = sim_clusters[cluster_id] if cluster_id in sim_clusters else []
+                user_cluster.append(user)
+                sim_clusters[cluster_id] = user_cluster
             
         iteration = 100
         deltas = {}
@@ -1316,7 +1354,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         for t in range(0, 2 * iteration, 2):
             
             for v in range(2):
-                if v == 0:
+                if v == (0 if start_with_trust else 1):
                     '''M-step for view 1: for each medoid m and each data point o associated to m, 
                         swap m and o and compute the total cost of the configuration, 
                         that is, the average dissimilarity of o to all the data points associated to m. 
@@ -1384,7 +1422,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                         user_cluster.append(user)
                         sim_clusters[cluster_id] = user_cluster
                         
-                elif v == 1:
+                elif v == (1 if start_with_trust else 0):
                     '''M-step for view 2: for each medoid m and each data point o associated to m, 
                         swap m and o and compute the total cost of the configuration, 
                         that is, the average dissimilarity of o to all the data points associated to m. 
