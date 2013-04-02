@@ -1040,6 +1040,7 @@ class KmedoidsCF(AbstractCF):
         users = train.keys()
         
         for u in users:
+            print len(rating_dist), 'out of', len(users)
             urs = train[u]
             utn = self.trust[u] if u in self.trust else {}
             for v in users:
@@ -1084,7 +1085,7 @@ class KmedoidsCF(AbstractCF):
                 
                 # part 1: direct trust
                 d = self.trust_distance(u, v, self.max_depth)
-                #if d > 0: print u, v, d
+                # if d > 0: print u, v, d
                 trust = 1.0 / d if d > 0 else 0                
                 
                 # part 2: overlapping trusted neighbors
@@ -1105,6 +1106,19 @@ class KmedoidsCF(AbstractCF):
         self.rating_dist = rating_dist
         self.trust_dist = trust_dist 
         
+        # output to the disk to save running time
+        with open('rating_dist.txt', 'w') as f: 
+            for userA, user_dist in rating_dist.viewitems():
+                for userB, dist in user_dist.viewitems():
+                    line = userA + ',' + userB + ',' + dist + '\n'
+                    f.write(line)
+        
+        with open('trust_dist.txt', 'w') as f: 
+            for userA, user_dist in trust_dist.viewitems():
+                for userB, dist in user_dist.viewitems():
+                    line = userA + ',' + userB + ',' + dist + '\n'
+                    f.write(line)
+                    
         return rating_dist, trust_dist
     
     def Kmedoids(self, train, K):
