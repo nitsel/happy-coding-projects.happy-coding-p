@@ -1127,8 +1127,14 @@ class KmedoidsCF(AbstractCF):
                 
                 # part 3: overall social distance
                 tsim = self.alpha * trust + (1 - self.alpha) * jaccard
-                '''if cannot connect in the trust network, and no commonly overlapping, 
-                    then relationship cannot be determined, because the real situation is unknown, could be close ''' 
+                '''
+                Note:
+                    if cannot connect in the trust network, and no commonly overlapping, 
+                    then relationship cannot be determined, because the real situation is unknown, could be close
+                However, 
+                    if we don't do this, the trust-based approach will become very unreliable in terms of MAE and RC, according to experiments.
+                Hence, 
+                    overall, I decided to continue allow tsim=0''' 
                 # if tsim == 0.0: continue
                 
                 social_dist = trust_dist[u] if u in trust_dist else {}
@@ -1571,7 +1577,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                     cluster_ids.append(c_id)
                 
             if not cluster_ids:
-                print 'cannot find the cluster for test user', test_user
+                # print 'cannot find the cluster for test user', test_user
                 continue
                 
             for test_item in test[test_user]:
@@ -1586,7 +1592,11 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                             t = 1 - self.trust_dist[test_user][m] if test_user in self.trust_dist and m in self.trust_dist[test_user] else 0
                             
                             rates.append(train[m][test_item])
-                            ws.append(math.pow(sim, 1 - self.beta * t))
+                            
+                            w = 1 - self.beta * t
+                            val = w if w < 1.0 else 0
+                            
+                            ws.append(math.pow(sim, val))
                     if rates:
                         pred = py.average(rates, weights=ws)
                         preds.append(pred)
