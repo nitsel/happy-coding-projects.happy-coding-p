@@ -1593,10 +1593,8 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                             
                             rates.append(train[m][test_item])
                             
-                            w = 1 - self.beta * t
-                            val = w if w < 1.0 else 0
-                            
-                            ws.append(math.pow(sim, val))
+                            w = 1 - self.beta * t # if t==1 => sim=1 which is not correct. so beta in [0, 1)
+                            ws.append(math.pow(sim, w))
                     if rates:
                         pred = py.average(rates, weights=ws)
                         preds.append(pred)
