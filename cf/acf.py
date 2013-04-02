@@ -999,7 +999,7 @@ class KmedoidsCF(AbstractCF):
         self.cluster_by = self.config['kmedoids.cluster.by']
         self.method_id = 'Kmedoids'
         
-        self.alpha = float(self.config['kmedoids.alpha'])
+        self.alpha = float(self.config['kmedoids.trust.alpha'])
         self.trust_len = int(self.config['trust.propagation.len'])
         
         self.max_depth = int(self.config['kmedoids.trust.max_depth'])
@@ -1039,8 +1039,36 @@ class KmedoidsCF(AbstractCF):
         trust_dist = {}
         users = train.keys()
         
+        prefix = self.test_set[0:self.test_set.find('.')]
+        rating_dist_file = 'rating_dist_' + prefix + '.txt'
+        trust_dist_file = 'trust_dist_' + prefix + '.txt'
+        
+        if os.path.exists(rating_dist_file) and os.path.exists(trust_dist_file):
+            print 'reading rating distance data from', rating_dist_file
+            with open(rating_dist_file, 'r') as f:
+                for line in f: 
+                    userA, userB, dist = line.strip().split(',')
+                    
+                    user_dist = rating_dist[userA] if userA in rating_dist else {}
+                    user_dist[userB] = float(dist)
+                    rating_dist[userA] = user_dist
+            
+            print 'reading trust distance data from', trust_dist_file
+            with open(trust_dist_file, 'r') as f:
+                for line in f: 
+                    userA, userB, dist = line.strip().split(',')
+                    
+                    user_dist = trust_dist[userA] if userA in trust_dist else {}
+                    user_dist[userB] = float(dist)
+                    trust_dist[userA] = user_dist
+            
+            self.rating_dist = rating_dist
+            self.trust_dist = trust_dist
+            
+            return rating_dist, trust_dist        
+                    
         for u in users:
-            print len(rating_dist), 'out of', len(users)
+            print len(rating_dist) + 1, 'out of', len(users)
             urs = train[u]
             utn = self.trust[u] if u in self.trust else {}
             for v in users:
@@ -1099,6 +1127,10 @@ class KmedoidsCF(AbstractCF):
                 
                 # part 3: overall social distance
                 tsim = self.alpha * trust + (1 - self.alpha) * jaccard
+                '''if cannot connect in the trust network, and no commonly overlapping, 
+                    then relationship cannot be determined, because the real situation is unknown, could be close ''' 
+                # if tsim == 0.0: continue
+                
                 social_dist = trust_dist[u] if u in trust_dist else {}
                 social_dist[v] = 1 - tsim
                 trust_dist[u] = social_dist
@@ -1107,16 +1139,16 @@ class KmedoidsCF(AbstractCF):
         self.trust_dist = trust_dist 
         
         # output to the disk to save running time
-        with open('rating_dist.txt', 'w') as f: 
+        with open(rating_dist_file, 'w') as f: 
             for userA, user_dist in rating_dist.viewitems():
                 for userB, dist in user_dist.viewitems():
-                    line = userA + ',' + userB + ',' + dist + '\n'
+                    line = userA + ',' + userB + ',' + str(dist) + '\n'
                     f.write(line)
         
-        with open('trust_dist.txt', 'w') as f: 
+        with open(trust_dist_file, 'w') as f: 
             for userA, user_dist in trust_dist.viewitems():
                 for userB, dist in user_dist.viewitems():
-                    line = userA + ',' + userB + ',' + dist + '\n'
+                    line = userA + ',' + userB + ',' + str(dist) + '\n'
                     f.write(line)
                     
         return rating_dist, trust_dist
@@ -1171,7 +1203,8 @@ class KmedoidsCF(AbstractCF):
                         if min_dist > dist:
                             min_dist = dist
                             cluster_id = c_id
-                
+
+                # if cluster_by == 'trust' and min_dist == 1.0: cluster_id = -1                
                 if cluster_id == -1: continue
                 
                 user_cluster = clusters[cluster_id] if cluster_id in clusters else []
@@ -1255,7 +1288,7 @@ class KmedoidsCF(AbstractCF):
                     break
                 
             if not cluster_ms:
-                print 'cannot find the cluster for test user', test_user
+                # print 'cannot find the cluster for test user', test_user
                 continue
                 
             for test_item in test[test_user]:
@@ -1283,7 +1316,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
     def __init__(self):
         KmedoidsCF.__init__(self)
         self.method_id = 'Multiview Kmedoids CF'
-        self.beta = float(self.config['multiview.trust.factor'])
+        self.beta = float(self.config['multiview.trust.beta'])
         
     def Multiview_Kmedoids(self, train, K):
         '''Multiview K-medoids clustering methods, refers to paper --- Multi-View Clustering
@@ -1305,7 +1338,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         medoid_indices = random.sample(range(len(users)), K)
         
         '''E-step for view 2: associate each data point o to the closest medoid'''
-        start_with_trust = not True
+        start_with_trust = True
         if start_with_trust:
             
             trust_medoids = {k:users[index] for k, index in zip(range(K), medoid_indices)}
@@ -1327,7 +1360,6 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                         if min_dist > dist:
                             min_dist = dist
                             cluster_id = c_id
-                
                 if cluster_id == -1: continue
                 
                 user_cluster = trust_clusters[cluster_id] if cluster_id in trust_clusters else []
@@ -1498,7 +1530,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                     min_dist = dist
                                     cluster_id = c_id
                         
-                        if cluster_id == -1: continue
+                        if min_dist == 1.0 or cluster_id == -1: continue
                         
                         user_cluster = trust_clusters[cluster_id] if cluster_id in trust_clusters else []
                         user_cluster.append(user)
