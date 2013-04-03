@@ -1000,8 +1000,6 @@ class KmedoidsCF(AbstractCF):
         self.method_id = 'Kmedoids'
         
         self.alpha = float(self.config['kmedoids.trust.alpha'])
-        self.trust_len = int(self.config['trust.propagation.len'])
-        
         self.max_depth = int(self.config['kmedoids.trust.max_depth'])
         
     def prep_test(self, train, test=None):
@@ -1038,10 +1036,12 @@ class KmedoidsCF(AbstractCF):
         rating_dist = {} 
         trust_dist = {}
         users = train.keys()
-        
+
+        dir_path = './d' + str(self.max_depth) + '/'        
         prefix = self.test_set[0:self.test_set.find('.')]
-        rating_dist_file = 'rating_dist_' + prefix + '.txt'
-        trust_dist_file = 'trust_dist_' + prefix + '.txt'
+        
+        rating_dist_file = dir_path + 'rating_dist_' + prefix + '.txt'
+        trust_dist_file = dir_path + 'trust_dist_' + prefix + '.txt'
         
         if os.path.exists(rating_dist_file) and os.path.exists(trust_dist_file):
             print 'reading rating distance data from', rating_dist_file
@@ -1056,45 +1056,27 @@ class KmedoidsCF(AbstractCF):
             print 'reading trust distance data from', trust_dist_file
             with open(trust_dist_file, 'r') as f:
                 for line in f: 
-                    userA, userB, dist = line.strip().split(',')
+                    userA, userB, trust, jaccd = line.strip().split(',')
                     
                     user_dist = trust_dist[userA] if userA in trust_dist else {}
-                    user_dist[userB] = float(dist)
+                    
+                    dist = float(trust) * self.alpha + float(jaccd) * (1 - self.alpha)
+                    user_dist[userB] = 1 - dist
                     trust_dist[userA] = user_dist
             
             self.rating_dist = rating_dist
             self.trust_dist = trust_dist
             
             return rating_dist, trust_dist        
-                    
+        
+        # compute user distance from scratch
+        relation_dist = {}
         for u in users:
             print len(rating_dist) + 1, 'out of', len(users)
             urs = train[u]
             utn = self.trust[u] if u in self.trust else {}
             for v in users:
                 if u == v: continue
-                
-                # reduce repeating computation since dist(u, v)=dist(v, u)
-                if v in rating_dist or v in trust_dist:
-                    computed = False
-                    
-                    if v in rating_dist and u in rating_dist[v]:
-                        sim_dist = rating_dist[v][u]
-                        
-                        user_dist = rating_dist[u] if u in rating_dist else {}
-                        user_dist[v] = sim_dist
-                        rating_dist[u] = user_dist
-                        computed = True
-                    
-                    if v in trust_dist and u in trust_dist[v]:
-                        tsim_dist = trust_dist[v][u]
-                        
-                        social_dist = trust_dist[u] if u in trust_dist else {}
-                        social_dist[v] = tsim_dist
-                        trust_dist[u] = social_dist
-                        computed = True
-                    
-                    if computed: continue
                 
                 # compute from scratch
                 vrs = train[v]
@@ -1114,7 +1096,7 @@ class KmedoidsCF(AbstractCF):
                 # part 1: direct trust
                 d = self.trust_distance(u, v, self.max_depth)
                 # if d > 0: print u, v, d
-                trust = 1.0 / d if d > 0 else 0                
+                trust = 1.0 / d if d > 0 else 0.0                
                 
                 # part 2: overlapping trusted neighbors
                 cnt = 0
@@ -1140,11 +1122,17 @@ class KmedoidsCF(AbstractCF):
                 social_dist = trust_dist[u] if u in trust_dist else {}
                 social_dist[v] = 1 - tsim
                 trust_dist[u] = social_dist
-        
+                
+                relate_dist = relation_dist[u] if u in relation_dist else {}
+                relate_dist[v] = (trust, jaccard)
+                relation_dist[u] = relate_dist
+                
         self.rating_dist = rating_dist
         self.trust_dist = trust_dist 
         
         # output to the disk to save running time
+        if(not os.path.exists(dir_path)): os.mkdir(dir_path)
+        
         with open(rating_dist_file, 'w') as f: 
             for userA, user_dist in rating_dist.viewitems():
                 for userB, dist in user_dist.viewitems():
@@ -1152,9 +1140,9 @@ class KmedoidsCF(AbstractCF):
                     f.write(line)
         
         with open(trust_dist_file, 'w') as f: 
-            for userA, user_dist in trust_dist.viewitems():
-                for userB, dist in user_dist.viewitems():
-                    line = userA + ',' + userB + ',' + str(dist) + '\n'
+            for userA, relate_dist in relation_dist.viewitems():
+                for userB, pair_dist in relate_dist.viewitems():
+                    line = userA + ',' + userB + ',' + str(pair_dist[0]) + ',' + str(pair_dist[1]) + '\n'
                     f.write(line)
                     
         return rating_dist, trust_dist
@@ -1593,7 +1581,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                             
                             rates.append(train[m][test_item])
                             
-                            w = 1 - self.beta * t # if t==1 => sim=1 which is not correct. so beta in [0, 1)
+                            w = 1 - self.beta * t  # if t==1 => sim=1 which is not correct. so beta in [0, 1)
                             ws.append(math.pow(sim, w))
                     if rates:
                         pred = py.average(rates, weights=ws)
