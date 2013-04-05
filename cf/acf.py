@@ -1000,6 +1000,7 @@ class KmedoidsCF(AbstractCF):
         self.method_id = 'Kmedoids'
         
         self.alpha = float(self.config['kmedoids.trust.alpha'])
+        self.beta = float(self.config['multiview.trust.beta'])
         self.max_depth = int(self.config['kmedoids.trust.max_depth'])
         
     def prep_test(self, train, test=None):
@@ -1045,6 +1046,8 @@ class KmedoidsCF(AbstractCF):
         rating_dist_file = dir_path + 'rating_dist_' + prefix + '.txt'
         trust_dist_file = dir_path + 'trust_dist_' + prefix + '.txt'
         
+        trust_scale = 6.70
+        
         if os.path.exists(rating_dist_file) and os.path.exists(trust_dist_file):
             print 'reading rating distance data from', rating_dist_file
             with open(rating_dist_file, 'r') as f:
@@ -1062,7 +1065,7 @@ class KmedoidsCF(AbstractCF):
                     
                     user_dist = trust_dist[userA] if userA in trust_dist else {}
                     
-                    t = float(trust)/6.70
+                    t = float(trust) / trust_scale
                     jc = float(jaccd)
                     
                     dist = t * self.alpha + jc * (1 - self.alpha)
@@ -1075,7 +1078,7 @@ class KmedoidsCF(AbstractCF):
             self.rating_dist = rating_dist
             self.trust_dist = trust_dist
             
-            paired = [x[0]/x[1] for x in data_pairs if x[0] > 0 and x[1] > 0]
+            paired = [x[0] / x[1] for x in data_pairs if x[0] > 0 and x[1] > 0]
             ts = [x[0] for x in data_pairs if x[0] > 0]
             js = [x[1] for x in data_pairs if x[1] > 0]
             
@@ -1124,7 +1127,7 @@ class KmedoidsCF(AbstractCF):
                 jaccard = float(cnt) / cnt_all
                 
                 # part 3: overall social distance
-                tsim = self.alpha * trust + (1 - self.alpha) * jaccard
+                tsim = self.alpha * trust / trust_scale + (1 - self.alpha) * jaccard
                 '''
                 Note:
                     if cannot connect in the trust network, and no commonly overlapping, 
@@ -1311,8 +1314,24 @@ class KmedoidsCF(AbstractCF):
                     sim = 1 - self.rating_dist[test_user][v] if test_user in self.rating_dist and v in self.rating_dist[test_user] else py.nan
                     
                     if not py.isnan(sim) and sim > 0.0:
+                        t = 1 - self.trust_dist[test_user][m] if test_user in self.trust_dist and m in self.trust_dist[test_user] else 0
+                        
                         rates.append(train[v][test_item])
-                        ws.append(sim)
+                        
+                        w=sim
+                        
+                        if True and self.cluster_by=='trust':
+                            urs = train[test_user]
+                            vrs = train[v]
+                            k = 0
+                            for item in urs.viewkeys():
+                                if item in vrs.viewkeys():
+                                    k += 1
+                            
+                            ratio = float(k) / self.beta if k < self.beta else 1
+                            w = ratio * sim + ((1 - ratio) * t if t > 0.5 else 0)
+                        
+                        ws.append(w)
                 
                 if rates:
                     pred = py.average(rates, weights=ws)
@@ -1326,7 +1345,6 @@ class MultiViewKmedoidsCF(KmedoidsCF):
     def __init__(self):
         KmedoidsCF.__init__(self)
         self.method_id = 'Multiview Kmedoids CF'
-        self.beta = float(self.config['multiview.trust.beta'])
         
     def Multiview_Kmedoids(self, train, K):
         '''Multiview K-medoids clustering methods, refers to paper --- Multi-View Clustering
