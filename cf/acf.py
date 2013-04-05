@@ -1036,6 +1036,8 @@ class KmedoidsCF(AbstractCF):
         rating_dist = {} 
         trust_dist = {}
         users = train.keys()
+        
+        data_pairs = []
 
         dir_path = './d' + str(self.max_depth) + '/'        
         prefix = self.test_set[0:self.test_set.find('.')]
@@ -1060,12 +1062,26 @@ class KmedoidsCF(AbstractCF):
                     
                     user_dist = trust_dist[userA] if userA in trust_dist else {}
                     
-                    dist = float(trust) * self.alpha + float(jaccd) * (1 - self.alpha)
+                    t = float(trust)
+                    jc = float(jaccd)
+                    
+                    dist = t * self.alpha + jc * (1 - self.alpha)
                     user_dist[userB] = 1 - dist
                     trust_dist[userA] = user_dist
+                    
+                    if (t + jc) > 0.0:
+                        data_pairs.append((t, jc))
             
             self.rating_dist = rating_dist
             self.trust_dist = trust_dist
+            
+            paired = [x[0]/x[1] for x in data_pairs if x[0] > 0 and x[1] > 0]
+            ts = [x[0] for x in data_pairs if x[0] > 0]
+            js = [x[1] for x in data_pairs if x[1] > 0]
+            
+            print 'mean of trust =', py.mean(ts), 'mean of jaccd =', py.mean(js)
+            print 'mean of paired =', py.mean(paired)
+            
             
             return rating_dist, trust_dist        
         
@@ -1269,7 +1285,7 @@ class KmedoidsCF(AbstractCF):
         
         clusters = self.Kmedoids(train, self.n_clusters)
         
-        self.results += ',' + self.cluster_by + ',' + str(self.n_clusters) + (',' + str(self.alpha) if self.cluster_by == 'trust' else '')
+        self.results += ',' + self.cluster_by + ',' + str(self.n_clusters) + (',' + str(self.max_depth) + ',' + str(self.alpha) if self.cluster_by == 'trust' else '')
         
         errors = []
         for test_user in test:
@@ -1531,7 +1547,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                         trust_clusters[cluster_id] = user_cluster
             
             delta = sim_delta + trust_delta
-            deltas[t % 4] = delta
+            deltas[(t / 2) % 4] = delta
             
             if verbose: print 'iteration', (t + 1), 'delta =', delta
             if delta < tol: 
@@ -1552,7 +1568,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         
         clusters = self.Multiview_Kmedoids(train, self.n_clusters)
         
-        self.results += ',' + self.cluster_by + ',' + str(self.n_clusters) + ',' + str(self.alpha) + ',' + str(self.beta)
+        self.results += ',' + self.cluster_by + ',' + str(self.n_clusters) + ',' + str(self.max_depth) + ',' + str(self.alpha) + ',' + str(self.beta)
         
         errors = []
         for test_user in test:
@@ -1570,10 +1586,12 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                 
             for test_item in test[test_user]:
                 preds = []
+                preds2 = []
                 for cluster_id in cluster_ids:
                     candidates = [m for m in clusters[cluster_id] if m != test_user and test_item in train[m]]
                     rates = []
                     ws = []
+                    ws2 = []
                     for m in candidates:
                         sim = 1 - self.rating_dist[test_user][m] if test_user in self.rating_dist and m in self.rating_dist[test_user] else py.nan
                         if not py.isnan(sim) and sim > 0:
@@ -1581,15 +1599,39 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                             
                             rates.append(train[m][test_item])
                             
-                            w = 1 - self.beta * t  # if t==1 => sim=1 which is not correct. so beta in [0, 1)
-                            ws.append(math.pow(sim, w))
+                            # w = 1 - self.beta * t  # if t==1 => sim=1 which is not correct. so beta in [0, 1)
+                            
+                            urs = train[test_user]
+                            vrs = train[m]
+                            k = 0
+                            for item in urs.viewkeys():
+                                if item in vrs.viewkeys():
+                                    k += 1
+                            
+                            ratio = float(k) / self.beta if k < self.beta else 1
+                            # ratio = 1
+                            
+                            w = ratio * sim + ((1 - ratio) * t if t > 0.5 else 0)
+                            ws2.append(sim)
+                            # if sim > 0 and t > 0:
+                            # if w<1:
+                            #   print sim, w, math.pow(sim, w)
+                            # w = w if t > 0.5 else 1.0
+                            # ws.append(math.pow(sim, 1 + abs(t - sim)))
+                            # ws.append(sim)
+                            ws.append(w)
                     if rates:
                         pred = py.average(rates, weights=ws)
                         preds.append(pred)
+                        preds2.append(py.average(rates, weights=ws2))
                 if preds:
                     truth = test[test_user][test_item]
                     error = abs(py.mean(preds) - truth)
+                    error2 = abs(py.mean(preds2) - truth)
                     errors.append(error)
+                    
+                    if abs(error - error2) > 1:
+                        print error, error2
         self.errors = errors
         
 class KmeansCF(AbstractCF):
@@ -3071,7 +3113,7 @@ class SlopeOne(AbstractCF):
         pass
 
 def test_math():
-    for i in range(20):
+    for i in range(0):
         print i, 2.0 / (1 + math.exp(-i / 2.0)) - 1
         print i, 2.0 / (1 + math.exp(-i / 3.0)) - 1
         print i, 2.0 / (1 + math.exp(-i / 4.0)) - 1
@@ -3079,11 +3121,13 @@ def test_math():
         print i, 2.0 / (1 + math.exp(-i / 6.0)) - 1
     
     
-    xs = [0.5, 0.6]
+    xs = [0.1, 0.5, 0.6]
+    xs = [0.1 * y for y in range(11)]
     for x in xs:
-        for i in range(10):
+        for i in range(0, 11):
             y = 0.1 * i
-            print y, math.pow(x, 1 - y)   
+            # print x, y, math.pow(x, 1 - y), math.pow(x, 1 + y)
+            print x, y, abs(x - y), math.pow(x, 1 - abs(x - y)), math.pow(x, 1 + abs(x - y))
         
 def main():
     
