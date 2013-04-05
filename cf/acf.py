@@ -1062,7 +1062,7 @@ class KmedoidsCF(AbstractCF):
                     
                     user_dist = trust_dist[userA] if userA in trust_dist else {}
                     
-                    t = float(trust)
+                    t = float(trust)/6.70
                     jc = float(jaccd)
                     
                     dist = t * self.alpha + jc * (1 - self.alpha)
