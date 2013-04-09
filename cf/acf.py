@@ -24,6 +24,7 @@ off = 'off'
 
 debug = not True
 verbose = True
+unrated_rating = -1
 
 def load_config():
     config = {}
@@ -76,11 +77,13 @@ def matrix_factorization(R, U, V, K, steps=5000, lrate=0.0002, lam=0.02, tol=0.0
     return U, V
 
 class Prediction(object):
-    def __init__(self, user, item, pred, truth):
+    def __init__(self, user, item, pred, truth, weights=0):
         self.user = user
         self.item = item
         self.pred = pred
         self.truth = truth
+        '''In some cases, we may need to specify the weights of predictions, such as confidence'''
+        self.weights = weights
 
 class AbstractCF(object):
     '''
@@ -278,6 +281,7 @@ class AbstractCF(object):
         '''collect and print the final results'''
         
         total_test = sum([len(value) for value in self.test.viewvalues() ])
+        
         if self.user_preds:
             precisions = []
             recalls = []
@@ -287,6 +291,8 @@ class AbstractCF(object):
             errors = []
             top_n = int(self.config['top.n'])
             covered = 0
+            relevant_rating = float(self.config['relevant.rating.threshold'])
+            
             for test_user, preds in self.user_preds.viewitems():
                 # complete ranked (by prediction) and ideal list
                 sorted_preds = sorted(preds, key=lambda x: x.pred, reverse=True)
@@ -308,9 +314,15 @@ class AbstractCF(object):
                 
                 first_relevant = False
                 RR = 0  # Reciprocal Rank
+                
+                relevant_num = 0
+                for truth in self.test[test_user].viewvalues():
+                    if truth >= relevant_rating:
+                        relevant_num += 1
+                
                 for i in range(n_recom):
                     truth = list_recom[i].truth
-                    if truth > 0:  # rated as a hit item
+                    if truth >= relevant_rating:  # rated as a hit item
                         tp += 1
                         rank = i + 1
                         DCG += 1.0 / math.log(rank + 1, 2)
@@ -321,20 +333,26 @@ class AbstractCF(object):
                         if not first_relevant:
                             RR = 1.0 / rank
                             first_relevant = True
-                            
+                
                 precisions.append(float(tp) / n_recom)
-                recalls.append(float(tp) / len(self.test[test_user]))
-                RRs.append(RR)
+                
+                if relevant_num > 0:
+                    recalls.append(float(tp) / relevant_num)
+                
+                if RR > 0:
+                    RRs.append(RR)
                 
                 # average prediction
-                AP = py.mean(precisions_at_k) if precisions_at_k else 0
-                APs.append(AP)
+                if precisions_at_k:
+                    AP = py.mean(precisions_at_k)
+                    APs.append(AP)
                 
                 iDCG = 0
                 for i in range(len(list_truth)):
                     truth = list_truth[i].truth
-                    rank = i + 1
-                    iDCG += (1.0 / math.log(rank + 1, 2) if truth > 0 else 0)
+                    if truth >= relevant_rating:
+                        rank = i + 1
+                        iDCG += (1.0 / math.log(rank + 1, 2) if truth > 0 else 0)
                 
                 if iDCG > 0:
                     nDCG = DCG / iDCG
@@ -358,8 +376,8 @@ class AbstractCF(object):
             print 'MRR@{0:d} = {1:f},'.format(top_n, MRR_at_n),
             print 'RC = {0:2.2f}%'.format(RC)
             
-            self.results += ',{0:.6f},{1:.6f},{2:.6f},{3:.6f},{4:.6f},{5:.6f}'\
-                .format(Precision_at_n, Recall_at_n, F1_at_n, nDCG_at_n, MAP_at_n, MRR_at_n)
+            self.results += ',{0:d},{1:.6f},{2:.6f},{3:.6f},{4:.6f},{5:.6f},{6:.6f}'\
+                .format(top_n, Precision_at_n, Recall_at_n, F1_at_n, nDCG_at_n, MAP_at_n, MRR_at_n)
                 
         if self.errors:
             MAE = py.mean(self.errors)
@@ -381,7 +399,7 @@ class AbstractCF(object):
     def pairs(self, a, b):
         vas = []
         vbs = []
-        for item in a: 
+        for item in a:
             if item in b:
                 vas.append(a[item])
                 vbs.append(b[item])
@@ -508,7 +526,7 @@ class ClassicCF(AbstractCF):
             for test_item in self.test_items:
                 if test_item in a: continue
                 
-                truth = test[test_user][test_item] if test_item in test[test_user] else 0.0
+                truth = test[test_user][test_item] if test_item in test[test_user] else unrated_rating
                 
                 mu_a = 0.0
                 if self.prediction_method == 'resnick_formula':
@@ -539,11 +557,11 @@ class ClassicCF(AbstractCF):
                         weight = user_sims[user]
                         mu_b = mu_dist[user]
                     
-                    if py.isnan(weight) or weight <= self.similarity_threashold: continue
+                    if py.isnan(weight) or weight == 0.0: continue
                     
                     # print user, test_item
-                    votes.append(train[user][test_item] - mu_b)
-                    weights.append(weight)
+                    votes.append((train[user][test_item] - mu_b) * weight)
+                    weights.append(abs(weight))
                 
                 if not votes:continue
                 
@@ -555,7 +573,7 @@ class ClassicCF(AbstractCF):
                     votes = [votes[index] for index in indeces]
                 
                 # prediction
-                pred = mu_a + py.average(votes, weights=weights)
+                pred = mu_a + sum(votes) / sum(weights)
                 
                 prediction = Prediction(test_user, test_item, pred, truth)
                 predictions = user_preds[test_user] if test_user in user_preds else []
@@ -1040,13 +1058,13 @@ class KmedoidsCF(AbstractCF):
         
         data_pairs = []
 
-        dir_path = './d' + str(self.max_depth) + '/'        
+        dir_path = self.dataset_directory + 'd' + str(self.max_depth) + '/'        
         prefix = self.test_set[0:self.test_set.find('.')]
         
         rating_dist_file = dir_path + 'rating_dist_' + prefix + '.txt'
         trust_dist_file = dir_path + 'trust_dist_' + prefix + '.txt'
         
-        trust_scale = 6.70
+        trust_scale = 1.0  # FilmTrust: 6.70
         
         if os.path.exists(rating_dist_file) and os.path.exists(trust_dist_file):
             print 'reading rating distance data from', rating_dist_file
@@ -1085,16 +1103,17 @@ class KmedoidsCF(AbstractCF):
             print 'mean of trust =', py.mean(ts), 'mean of jaccd =', py.mean(js)
             print 'mean of paired =', py.mean(paired)
             
-            
             return rating_dist, trust_dist        
         
         # compute user distance from scratch
         relation_dist = {}
         for u in users:
             print len(rating_dist) + 1, 'out of', len(users)
+            
             urs = train[u]
             utn = self.trust[u] if u in self.trust else {}
             for v in users:
+                
                 if u == v: continue
                 
                 # compute from scratch
@@ -1150,7 +1169,7 @@ class KmedoidsCF(AbstractCF):
         self.trust_dist = trust_dist 
         
         # output to the disk to save running time
-        if(not os.path.exists(dir_path)): os.mkdir(dir_path)
+        if(not os.path.exists(dir_path)): os.makedirs(dir_path)
         
         with open(rating_dist_file, 'w') as f: 
             for userA, user_dist in rating_dist.viewitems():
@@ -1318,9 +1337,9 @@ class KmedoidsCF(AbstractCF):
                         
                         rates.append(train[v][test_item])
                         
-                        w=sim
+                        w = sim
                         
-                        if True and self.cluster_by=='trust':
+                        if True and self.cluster_by == 'trust':
                             urs = train[test_user]
                             vrs = train[v]
                             k = 0
@@ -1339,6 +1358,69 @@ class KmedoidsCF(AbstractCF):
                     error = abs(pred - truth)
                     errors.append(error)
         self.errors = errors
+    
+    def cross_over_top_n(self, train, test):
+        clusters = self.Kmedoids(train, self.n_clusters)
+        
+        self.results += ',' + self.cluster_by + ',' + str(self.n_clusters) + (',' + str(self.max_depth) + ',' + str(self.alpha) if self.cluster_by == 'trust' else '')
+        
+        user_preds = {}
+        for test_user in test:
+            if test_user not in train: continue     
+            
+            cluster_ms = []
+            for c_ms in clusters.viewvalues():
+                if test_user in c_ms:
+                    cluster_ms = [c_m for c_m in c_ms if c_m != test_user]
+                    break
+                
+            if not cluster_ms:
+                # print 'cannot find the cluster for test user', test_user
+                continue
+            
+            a = train[test_user] if test_user in train else {}
+                
+            for test_item in self.test_items:
+                if test_item in a: continue
+                
+                candidates = [m for m in cluster_ms if test_item in train[m]]
+                truth = test[test_user][test_item] if test_item in test[test_user] else unrated_rating
+                
+                rates = []
+                ws = []
+                for v in candidates:
+                    '''no matter clustered by sim or trust, for prediction, all based on similarity value'''
+                    sim = 1 - self.rating_dist[test_user][v] if test_user in self.rating_dist and v in self.rating_dist[test_user] else py.nan
+                    
+                    if not py.isnan(sim) and sim > 0.0:
+                        t = 1 - self.trust_dist[test_user][m] if test_user in self.trust_dist and m in self.trust_dist[test_user] else 0
+                        
+                        rates.append(train[v][test_item])
+                        
+                        w = sim
+                        
+                        if True and self.cluster_by == 'trust':
+                            urs = train[test_user]
+                            vrs = train[v]
+                            k = 0
+                            for item in urs.viewkeys():
+                                if item in vrs.viewkeys():
+                                    k += 1
+                            
+                            ratio = float(k) / self.beta if k < self.beta else 1
+                            w = ratio * sim + ((1 - ratio) * t if t > 0.5 else 0)
+                        
+                        ws.append(w)
+                
+                if rates:
+                    pred = py.average(rates, weights=ws)
+                    
+                    prediction = Prediction(test_user, test_item, pred, truth)
+                    predictions = user_preds[test_user] if test_user in user_preds else []
+                    predictions.append(prediction)
+                    user_preds[test_user] = predictions
+                    
+        self.user_preds = user_preds
 
 class MultiViewKmedoidsCF(KmedoidsCF):
     
@@ -1604,20 +1686,16 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                 
             for test_item in test[test_user]:
                 preds = []
-                preds2 = []
                 for cluster_id in cluster_ids:
                     candidates = [m for m in clusters[cluster_id] if m != test_user and test_item in train[m]]
                     rates = []
                     ws = []
-                    ws2 = []
                     for m in candidates:
                         sim = 1 - self.rating_dist[test_user][m] if test_user in self.rating_dist and m in self.rating_dist[test_user] else py.nan
                         if not py.isnan(sim) and sim > 0:
                             t = 1 - self.trust_dist[test_user][m] if test_user in self.trust_dist and m in self.trust_dist[test_user] else 0
                             
                             rates.append(train[m][test_item])
-                            
-                            # w = 1 - self.beta * t  # if t==1 => sim=1 which is not correct. so beta in [0, 1)
                             
                             urs = train[test_user]
                             vrs = train[m]
@@ -1627,30 +1705,81 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                     k += 1
                             
                             ratio = float(k) / self.beta if k < self.beta else 1
-                            # ratio = 1
                             
                             w = ratio * sim + ((1 - ratio) * t if t > 0.5 else 0)
-                            ws2.append(sim)
-                            # if sim > 0 and t > 0:
-                            # if w<1:
-                            #   print sim, w, math.pow(sim, w)
-                            # w = w if t > 0.5 else 1.0
-                            # ws.append(math.pow(sim, 1 + abs(t - sim)))
-                            # ws.append(sim)
                             ws.append(w)
                     if rates:
                         pred = py.average(rates, weights=ws)
                         preds.append(pred)
-                        preds2.append(py.average(rates, weights=ws2))
                 if preds:
                     truth = test[test_user][test_item]
                     error = abs(py.mean(preds) - truth)
-                    error2 = abs(py.mean(preds2) - truth)
                     errors.append(error)
                     
-                    if abs(error - error2) > 1:
-                        print error, error2
         self.errors = errors
+    
+    def cross_over_top_n(self, train, test):
+        
+        clusters = self.Multiview_Kmedoids(train, self.n_clusters)
+        
+        self.results += ',' + self.cluster_by + ',' + str(self.n_clusters) + ',' + str(self.max_depth) + ',' + str(self.alpha) + ',' + str(self.beta)
+        
+        user_preds = {}
+        for test_user in test:
+            if test_user not in train: continue     
+            
+            # it is possible that one user occurs in two clusters
+            cluster_ids = [] 
+            for c_id, c_ms in clusters.viewitems():
+                if test_user in c_ms:
+                    cluster_ids.append(c_id)
+                
+            if not cluster_ids:
+                # print 'cannot find the cluster for test user', test_user
+                continue
+            
+            a = train[test_user] if test_user in train else {}
+                
+            for test_item in self.test_items:
+                if test_item in a: continue
+                
+                truth = test[test_user][test_item] if test_item in test[test_user] else unrated_rating
+                
+                preds = []
+                for cluster_id in cluster_ids:
+                    candidates = [m for m in clusters[cluster_id] if m != test_user and test_item in train[m]]
+                    rates = []
+                    ws = []
+                    for m in candidates:
+                        sim = 1 - self.rating_dist[test_user][m] if test_user in self.rating_dist and m in self.rating_dist[test_user] else py.nan
+                        if not py.isnan(sim) and sim > 0:
+                            t = 1 - self.trust_dist[test_user][m] if test_user in self.trust_dist and m in self.trust_dist[test_user] else 0
+                            
+                            rates.append(train[m][test_item])
+                            
+                            urs = train[test_user]
+                            vrs = train[m]
+                            k = 0
+                            for item in urs.viewkeys():
+                                if item in vrs.viewkeys():
+                                    k += 1
+                            
+                            ratio = float(k) / self.beta if k < self.beta else 1
+                            
+                            w = ratio * sim + ((1 - ratio) * t if t > 0.5 else 0)
+                            ws.append(w)
+                    if rates:
+                        pred = py.average(rates, weights=ws)
+                        preds.append(pred)
+                if preds:
+                    pred = py.mean(preds)
+                    
+                    prediction = Prediction(test_user, test_item, pred, truth)
+                    predictions = user_preds[test_user] if test_user in user_preds else []
+                    predictions.append(prediction)
+                    user_preds[test_user] = predictions
+                    
+        self.user_preds = user_preds
         
 class KmeansCF(AbstractCF):
     def __init__(self):
@@ -1779,7 +1908,7 @@ class KmeansCF(AbstractCF):
             for test_item in self.test_items:
                 if test_item in a: continue
                 
-                truth = test[test_user][test_item] if test_item in test[test_user] else 0.0
+                truth = test[test_user][test_item] if test_item in test[test_user] else unrated_rating
                 
                 if pred_method == 'mean':
                     rates = [train[member][test_item] for member in members if test_item in train[member]]
@@ -2272,7 +2401,7 @@ class KmeansTrust(KmeansCF):
             for test_item in self.test_items:
                 if test_item in a: continue
                 
-                truth = test[test_user][test_item] if test_item in test[test_user] else 0.0
+                truth = test[test_user][test_item] if test_item in test[test_user] else unrated_rating
                 
                 if pred_method == 'mean':
                     rates = [train[member][test_item] for member in members if test_item in train[member]]
@@ -3106,7 +3235,7 @@ class MF(AbstractCF):
                 if test_item in a: continue
                 
                 # truth
-                truth = test[test_user][test_item] if test_item in test[test_user] else 0.0
+                truth = test[test_user][test_item] if test_item in test[test_user] else unrated_rating
                 
                 # prediction
                 row = users.index(test_user)
