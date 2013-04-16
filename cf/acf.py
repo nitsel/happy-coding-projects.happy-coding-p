@@ -182,6 +182,7 @@ class AbstractCF(object):
         if batch_run: 
             self.multiple_run()
         else:
+            self.n_clusters = [int(self.config['kmeans.clusters'])]
             self.single_run()
         
         # copy file to back up results
@@ -200,7 +201,7 @@ class AbstractCF(object):
     def multiple_run(self):
         if self.config['cross.validation.batch'] == on:
             if self.config['kmeans.clusters'] == 'batch':
-                n_clusters = [10 * (i + 1) for i in range(9)]
+                n_clusters = [50 * (i + 1) for i in range(10)]
             else:
                 n_clusters = [int(self.config['kmeans.clusters'])]
             
@@ -390,10 +391,10 @@ class AbstractCF(object):
             RC = float(pred_test) / total_test * 100
             rc = 'RC = {0:2.2f}%, '.format(RC)
             
-            print mae + rmse + rc + self.data_file
+            print mae + rmse + rc + self.data_file[-40:]
             self.results += ',{0:.6f},{1:.6f},{2:2.2f}%'.format(MAE, RMSE, RC)
         
-        self.results += ',' + self.data_file
+        self.results += ',' + self.data_file[-40:]
         logs.debug(self.results)
     
     def pairs(self, a, b):
@@ -1018,7 +1019,6 @@ class KmedoidsCF(AbstractCF):
         self.method_id = 'Kmedoids'
         
         self.alpha = float(self.config['kmedoids.trust.alpha'])
-        self.beta = float(self.config['multiview.trust.beta'])
         self.max_depth = int(self.config['kmedoids.trust.max_depth'])
         
     def prep_test(self, train, test=None):
@@ -1064,7 +1064,7 @@ class KmedoidsCF(AbstractCF):
         rating_dist_file = dir_path + 'rating_dist_' + prefix + '.txt'
         trust_dist_file = dir_path + 'trust_dist_' + prefix + '.txt'
         
-        trust_scale = 1.0  # FilmTrust: 6.70
+        trust_scale = 4.13  # FilmTrust: 6.70, Flixster: 4.13
         
         if os.path.exists(rating_dist_file) and os.path.exists(trust_dist_file):
             print 'reading rating distance data from', rating_dist_file
@@ -1100,8 +1100,9 @@ class KmedoidsCF(AbstractCF):
             ts = [x[0] for x in data_pairs if x[0] > 0]
             js = [x[1] for x in data_pairs if x[1] > 0]
             
-            print 'mean of trust =', py.mean(ts), 'mean of jaccd =', py.mean(js)
-            print 'mean of paired =', py.mean(paired)
+            if not True:
+                logs.info('mean of trust = ' + str(py.mean(ts)) + ', mean of jaccd = ' + str(py.mean(js)))
+                logs.info('mean of paired = ' + str(py.mean(paired)))
             
             return rating_dist, trust_dist        
         
@@ -1204,7 +1205,7 @@ class KmedoidsCF(AbstractCF):
         medoid_indices = random.sample(range(len(users)), K)
         medoids = {k:users[index] for k, index in zip(range(K), medoid_indices)}
         
-        iteration = 100
+        iteration = 200
         deltas = {}
         deltas_stable_times = 0
         
@@ -1307,7 +1308,8 @@ class KmedoidsCF(AbstractCF):
         
         clusters = self.Kmedoids(train, self.n_clusters)
         
-        self.results += ',' + self.cluster_by + ',' + str(self.n_clusters) + (',' + str(self.max_depth) + ',' + str(self.alpha) if self.cluster_by == 'trust' else '')
+        self.results += ',' + self.cluster_by + ',' + str(self.n_clusters) \
+            + (',' + str(self.max_depth) + ',' + str(self.alpha) if self.cluster_by == 'trust' else '')
         
         errors = []
         for test_user in test:
@@ -1332,27 +1334,27 @@ class KmedoidsCF(AbstractCF):
                     '''no matter clustered by sim or trust, for prediction, all based on similarity value'''
                     sim = 1 - self.rating_dist[test_user][v] if test_user in self.rating_dist and v in self.rating_dist[test_user] else py.nan
                     
-                    if not py.isnan(sim) and sim > 0.0:
+                    if not py.isnan(sim) and 1 + sim > 0.0:
                         t = 1 - self.trust_dist[test_user][m] if test_user in self.trust_dist and m in self.trust_dist[test_user] else 0
                         
-                        rates.append(train[v][test_item])
+                        if self.cluster_by == 'trust':
+                            w = stats.hmean([1 + sim, 1 + t])
+                            # w = (1 + sim) * (1 + t)
+                        else:
+                            w = sim
                         
-                        w = sim
-                        
-                        if True and self.cluster_by == 'trust':
-                            urs = train[test_user]
-                            vrs = train[v]
-                            k = 0
-                            for item in urs.viewkeys():
-                                if item in vrs.viewkeys():
-                                    k += 1
-                            
-                            ratio = float(k) / self.beta if k < self.beta else 1
-                            w = ratio * sim + ((1 - ratio) * t if t > 0.5 else 0)
-                        
-                        ws.append(w)
+                        if w > 0:
+                            ws.append(w)
+                            rates.append(train[v][test_item])
                 
                 if rates:
+                    # k-NN methods: find top-k most similar users according to their weights
+                    if self.knn > 0:
+                        sorted_ws = sorted(enumerate(ws), reverse=True, key=operator.itemgetter(1))[:self.knn]
+                        indeces = [item[0] for item in sorted_ws]
+                        ws = [ws[index] for index in indeces]
+                        rates = [rates[index] for index in indeces]
+                        
                     pred = py.average(rates, weights=ws)
                     truth = test[test_user][test_item]
                     error = abs(pred - truth)
@@ -1392,25 +1394,17 @@ class KmedoidsCF(AbstractCF):
                     '''no matter clustered by sim or trust, for prediction, all based on similarity value'''
                     sim = 1 - self.rating_dist[test_user][v] if test_user in self.rating_dist and v in self.rating_dist[test_user] else py.nan
                     
-                    if not py.isnan(sim) and sim > 0.0:
+                    if not py.isnan(sim) and 1 + sim > 0.0:
                         t = 1 - self.trust_dist[test_user][m] if test_user in self.trust_dist and m in self.trust_dist[test_user] else 0
                         
-                        rates.append(train[v][test_item])
+                        if self.cluster_by == 'trust':
+                            w = stats.hmean([1 + sim, 1 + t])
+                        else: 
+                            w = sim
                         
-                        w = sim
-                        
-                        if True and self.cluster_by == 'trust':
-                            urs = train[test_user]
-                            vrs = train[v]
-                            k = 0
-                            for item in urs.viewkeys():
-                                if item in vrs.viewkeys():
-                                    k += 1
-                            
-                            ratio = float(k) / self.beta if k < self.beta else 1
-                            w = ratio * sim + ((1 - ratio) * t if t > 0.5 else 0)
-                        
-                        ws.append(w)
+                        if w > 0:
+                            ws.append(w)
+                            rates.append(train[v][test_item])
                 
                 if rates:
                     pred = py.average(rates, weights=ws)
@@ -1449,8 +1443,8 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         
         '''E-step for view 2: associate each data point o to the closest medoid'''
         start_with_trust = True
+        
         if start_with_trust:
-            
             trust_medoids = {k:users[index] for k, index in zip(range(K), medoid_indices)}
             trust_clusters = {}
             for user in train:
@@ -1503,7 +1497,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                 user_cluster.append(user)
                 sim_clusters[cluster_id] = user_cluster
             
-        iteration = 100
+        iteration = 200
         deltas = {}
         deltas_stable_times = 0
         
@@ -1668,7 +1662,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         
         clusters = self.Multiview_Kmedoids(train, self.n_clusters)
         
-        self.results += ',' + self.cluster_by + ',' + str(self.n_clusters) + ',' + str(self.max_depth) + ',' + str(self.alpha) + ',' + str(self.beta)
+        self.results += ',' + self.cluster_by + ',' + str(self.n_clusters) + ',' + str(self.max_depth) + ',' + str(self.alpha)
         
         errors = []
         for test_user in test:
@@ -1690,25 +1684,30 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                     candidates = [m for m in clusters[cluster_id] if m != test_user and test_item in train[m]]
                     rates = []
                     ws = []
+                    
                     for m in candidates:
                         sim = 1 - self.rating_dist[test_user][m] if test_user in self.rating_dist and m in self.rating_dist[test_user] else py.nan
-                        if not py.isnan(sim) and sim > 0:
-                            t = 1 - self.trust_dist[test_user][m] if test_user in self.trust_dist and m in self.trust_dist[test_user] else 0
+                        t = 1 - self.trust_dist[test_user][m] if test_user in self.trust_dist and m in self.trust_dist[test_user] else 0
+                        
+                        if not py.isnan(sim) and 1 + sim > 0:
+
+                            if t > 0:
+                                w = stats.hmean([1 + sim, 1 + t])
+                            else:
+                                w = 1 + sim
+                                
+                            if w > 0:
+                                ws.append(w)
+                                rates.append(train[m][test_item])
                             
-                            rates.append(train[m][test_item])
-                            
-                            urs = train[test_user]
-                            vrs = train[m]
-                            k = 0
-                            for item in urs.viewkeys():
-                                if item in vrs.viewkeys():
-                                    k += 1
-                            
-                            ratio = float(k) / self.beta if k < self.beta else 1
-                            
-                            w = ratio * sim + ((1 - ratio) * t if t > 0.5 else 0)
-                            ws.append(w)
                     if rates:
+                        # k-NN methods: find top-k most similar users according to their weights
+                        if self.knn > 0:
+                            sorted_ws = sorted(enumerate(ws), reverse=True, key=operator.itemgetter(1))[:self.knn]
+                            indeces = [item[0] for item in sorted_ws]
+                            ws = [ws[index] for index in indeces]
+                            rates = [rates[index] for index in indeces]
+                            
                         pred = py.average(rates, weights=ws)
                         preds.append(pred)
                 if preds:
@@ -1722,7 +1721,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         
         clusters = self.Multiview_Kmedoids(train, self.n_clusters)
         
-        self.results += ',' + self.cluster_by + ',' + str(self.n_clusters) + ',' + str(self.max_depth) + ',' + str(self.alpha) + ',' + str(self.beta)
+        self.results += ',' + self.cluster_by + ',' + str(self.n_clusters) + ',' + str(self.max_depth) + ',' + str(self.alpha)
         
         user_preds = {}
         for test_user in test:
@@ -1752,22 +1751,15 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                     ws = []
                     for m in candidates:
                         sim = 1 - self.rating_dist[test_user][m] if test_user in self.rating_dist and m in self.rating_dist[test_user] else py.nan
-                        if not py.isnan(sim) and sim > 0:
+                        if not py.isnan(sim) and 1 + sim > 0:
                             t = 1 - self.trust_dist[test_user][m] if test_user in self.trust_dist and m in self.trust_dist[test_user] else 0
                             
-                            rates.append(train[m][test_item])
+                            w = stats.hmean([1 + sim, 1 + t])
                             
-                            urs = train[test_user]
-                            vrs = train[m]
-                            k = 0
-                            for item in urs.viewkeys():
-                                if item in vrs.viewkeys():
-                                    k += 1
+                            if w > 0:
+                                ws.append(w)
+                                rates.append(train[m][test_item])
                             
-                            ratio = float(k) / self.beta if k < self.beta else 1
-                            
-                            w = ratio * sim + ((1 - ratio) * t if t > 0.5 else 0)
-                            ws.append(w)
                     if rates:
                         pred = py.average(rates, weights=ws)
                         preds.append(pred)
