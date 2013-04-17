@@ -12,7 +12,7 @@ from data import Dataset
 # from sklearn.cluster import DBSCAN
 from graph import Graph, Vertex, Edge
 import random, emailer
-from scipy import stats
+from scipy import stats, integrate
 import copy
 
 cross_validation = 'cross_validation'
@@ -25,6 +25,22 @@ off = 'off'
 debug = not True
 verbose = True
 unrated_rating = -1
+
+def calc_confidence(rates):
+    r_median = 2.75
+    r = 0
+    s = 0
+    for rate in rates:
+        if rate > r_median:
+            r += 1
+        else:
+            s += 1
+    y = integrate.quad(lambda x: math.pow(x, r) * math.pow(1 - x, s), 0, 1)[0]
+    
+    res = 0.5 * integrate.quad(lambda x: abs(math.pow(x, r) * math.pow(1 - x, s) - y), 0, 1)[0] / y
+    
+    # print r, s, res
+    return res
 
 def load_config():
     config = {}
@@ -1339,7 +1355,6 @@ class KmedoidsCF(AbstractCF):
                         
                         if self.cluster_by == 'trust':
                             w = stats.hmean([1 + sim, 1 + t])
-                            # w = (1 + sim) * (1 + t)
                         else:
                             w = sim
                         
@@ -1656,15 +1671,17 @@ class MultiViewKmedoidsCF(KmedoidsCF):
             
         print 'Done!'
         
-        return {k: list(set(sim_clusters[k]) | set(trust_clusters[k])) for k in range(K)}
+        return {k: list(set(sim_clusters[k]) | set(trust_clusters[k])) for k in range(K)}, sim_clusters, trust_clusters
     
     def cross_over(self, train, test):
         
-        clusters = self.Multiview_Kmedoids(train, self.n_clusters)
+        clusters, sim_clusters, trust_clusters = self.Multiview_Kmedoids(train, self.n_clusters)
         
         self.results += ',' + self.cluster_by + ',' + str(self.n_clusters) + ',' + str(self.max_depth) + ',' + str(self.alpha)
         
         errors = []
+        feature_used = {} 
+        count = 0
         for test_user in test:
             if test_user not in train: continue     
             
@@ -1673,18 +1690,29 @@ class MultiViewKmedoidsCF(KmedoidsCF):
             for c_id, c_ms in clusters.viewitems():
                 if test_user in c_ms:
                     cluster_ids.append(c_id)
+            
+            sim_cluster_id = -1
+            for c_id, c_ms in sim_clusters.viewitems():
+                if test_user in c_ms:
+                    sim_cluster_id = c_id
+                    break
                 
             if not cluster_ids:
                 # print 'cannot find the cluster for test user', test_user
                 continue
-                
+            
             for test_item in test[test_user]:
                 preds = []
+                features = []
+                
                 for cluster_id in cluster_ids:
                     candidates = [m for m in clusters[cluster_id] if m != test_user and test_item in train[m]]
                     rates = []
                     ws = []
                     
+                    sim_cnt = 0
+                    trust_cnt = 0
+                    total_cnt = 0
                     for m in candidates:
                         sim = 1 - self.rating_dist[test_user][m] if test_user in self.rating_dist and m in self.rating_dist[test_user] else py.nan
                         t = 1 - self.trust_dist[test_user][m] if test_user in self.trust_dist and m in self.trust_dist[test_user] else 0
@@ -1695,10 +1723,19 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                 w = stats.hmean([1 + sim, 1 + t])
                             else:
                                 w = 1 + sim
+                            # w = stats.hmean([1 + sim, 1 + t])
                                 
                             if w > 0:
                                 ws.append(w)
                                 rates.append(train[m][test_item])
+                                
+                                if m in sim_clusters[cluster_id]:
+                                    sim_cnt += 1
+                                
+                                if m in trust_clusters[cluster_id]:
+                                    trust_cnt += 1
+                                
+                                total_cnt += 1
                             
                     if rates:
                         # k-NN methods: find top-k most similar users according to their weights
@@ -1710,12 +1747,90 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                             
                         pred = py.average(rates, weights=ws)
                         preds.append(pred)
+                        
+                        if len(cluster_ids) > 1:
+                            '''compute feature for confidence of prediction'''
+                            
+                            params = {}
+                            # average similarity:
+                            params['avg_weight'] = py.mean(ws)
+                            params['conf'] = calc_confidence(rates)
+                            params['sim_cnt'] = sim_cnt
+                            params['trust_cnt'] = trust_cnt
+                            params['total_cnt'] = total_cnt
+                            params['pred'] = pred
+                            
+                            features.append(params)
                 if preds:
                     truth = test[test_user][test_item]
-                    error = abs(py.mean(preds) - truth)
+                    
+                    if len(preds) > 1:
+                        count += 1
+                        f1 = features[0]
+                        f2 = features[1]
+                        # if feature1[0] * feature1[1] < feature2[0] * feature2[1]:
+                        '''if feature1[3] < feature2[3]:
+                            pred = preds[1]
+                        else:
+                            pred = preds[0]'''
+                        
+                        # pred = py.average(preds, weights=[v1, v2])
+                        e1 = abs(preds[0] - truth)
+                        e2 = abs(preds[1] - truth)
+                        # if e1 < e2:
+                        # if preds[0] > preds[1]:
+                        if f1['total_cnt'] >= f2['total_cnt']:
+                            
+                            if f1['total_cnt'] == f2['total_cnt']:
+                                if f1['pred'] > f2['pred']:
+                                    pred = preds[0]
+                                else:
+                                    pred = preds[1]
+                            else:
+                                pred = preds[0]
+                            
+                            # print 'correct cluster id:', cluster_ids[0], ', sim_cluster id:', sim_cluster_id
+                            f = ''
+                            i = 0
+                            for key, val in f1.viewitems():
+                                if i == 0:
+                                    f += ','
+                                    i += 1
+                                    
+                                f += '(' + str(val) + ',' + str(f2[key]) + ')'
+                                
+                                if val > f2[key]:
+                                    cnt = feature_used[i] if i in feature_used else 0
+                                    cnt += 1
+                                    feature_used[i] = cnt
+                            logs.info(f + ', 0')
+                        else:
+                            pred = preds[1]
+                            
+                            f = ''
+                            i = 0
+                            for key, val in f1.viewitems():
+                                if i == 0:
+                                    f += ','
+                                    i += 1
+                                    
+                                f += '(' + str(val) + ',' + str(f2[key]) + ')'
+                                
+                                if val > f2[key]:
+                                    cnt = feature_used[i] if i in feature_used else 0
+                                    cnt += 1
+                                    feature_used[i] = cnt
+                            logs.info(f + ', 1')
+                    else:
+                        pred = preds[0]
+                        
+                    error = abs(pred - truth)
                     errors.append(error)
                     
         self.errors = errors
+        
+        for key, val in feature_used.viewitems():
+            logs.info('Feature ' + str(key) + ' is used ' + str(val) + ' out of ' + str(count) + ' times.')
     
     def cross_over_top_n(self, train, test):
         
@@ -3270,7 +3385,9 @@ def test_math():
         
 def main():
     
-    if not True: test_math()
+    if not True: 
+        rates = [1, 10]
+        calc_confidence(rates)
     
     config = load_config()
     AbstractCF.config = config
