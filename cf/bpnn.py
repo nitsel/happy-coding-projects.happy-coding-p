@@ -9,6 +9,7 @@
 import math
 import random
 import numpy as py
+from sklearn import svm
 
 random.seed(0)
 
@@ -212,7 +213,100 @@ def test_demo():
 
 def norm(val, max_range, min_range):
     
-    return (val - min_range) / (max_range - min_range)    
+    return (val - min_range) / (max_range - min_range)   
+
+def test_svm():
+    train_data = [] 
+    train_targets = []
+    
+    test_data = []
+    test_targets = []
+    
+    test = True
+    max_e_cnt = 22.0 if test else 0.0
+    min_e_cnt = -21.0 if test else py.inf
+    
+    max_e_ws = 1.63052828876 if test else 0.0
+    min_e_ws = -1.84894243415 if test else py.inf
+    
+    max_e_pred = 3.68294309876 if test else 0.0
+    min_e_pred = -4.5 if test else py.inf
+    
+    max_e_conf = 0.586835439012 if test else 0.0
+    min_e_conf = 3.68294309876 if test else py.inf
+    
+    with open('features.txt') as f:
+        line_num = 0
+        for line in f:
+            line = line.strip()
+            if not line: continue
+            
+            features = []
+            
+            touples = line.split(',')
+            
+            # targets
+            target = float(touples[12])
+            
+            # avg_weights
+            avg_w1 = float(touples[0][1:])
+            avg_w2 = float(touples[1][:-1])
+            e_ws = avg_w1 - avg_w2
+            features.append(norm(e_ws, max_e_ws, min_e_ws) if test else e_ws)  # => when disabled, accuracy = 0.52
+            
+            if max_e_ws < e_ws: max_e_ws = e_ws
+            if min_e_ws > e_ws: min_e_ws = e_ws
+            
+            # conf
+            conf1 = float(touples[2][1:])
+            conf2 = float(touples[3][:-1])
+            e_conf = conf1 - conf2
+            features.append(norm(e_conf, max_e_conf, min_e_conf) if test else e_conf)
+            
+            if max_e_conf < e_conf: max_e_conf = e_conf
+            if min_e_conf > e_conf: min_e_conf = e_conf
+            
+            # total_cnt
+            cnt1 = float(touples[8][1:])
+            cnt2 = float(touples[9][:-1])
+            e_cnt = cnt1 - cnt2
+            features.append(norm(e_cnt, max_e_cnt, min_e_cnt) if test else e_cnt)
+            
+            if max_e_cnt < e_cnt: max_e_cnt = e_cnt
+            if min_e_cnt > e_cnt: min_e_cnt = e_cnt
+            
+            # preds
+            pred1 = float(touples[10][1:])
+            pred2 = float(touples[11][:-1])
+            e_pred = pred1 - pred2
+            # features.append(norm(e_pred, max_e_pred, min_e_pred) if test else e_pred)
+            
+            if max_e_pred < e_pred: max_e_pred = e_pred
+            if min_e_pred > e_pred: min_e_pred = e_pred
+            
+            if line_num < 100:
+                test_data.append(features)
+                test_targets.append(target)
+            else:
+                train_data.append(features)
+                train_targets.append(target)
+            
+            line_num += 1
+            if line_num >= 2000:
+                break
+    clf = svm.SVC()
+    clf.fit(train_data, train_targets)
+    pred_targets = clf.predict(test_data)
+    
+    k = 0
+    for i in range(len(pred_targets)):
+        pred = pred_targets[i]
+        truth = test_targets[i]
+        
+        if pred == truth:
+            k += 1
+    
+    print 'accuracy =', float(k) / len(test_targets)
 
 def test_demo2():
     
@@ -251,7 +345,7 @@ def test_demo2():
             avg_w1 = float(touples[0][1:])
             avg_w2 = float(touples[1][:-1])
             e_ws = avg_w1 - avg_w2
-            #features.append(norm(e_ws, max_e_ws, min_e_ws) if test else e_ws)  # => when disabled, accuracy = 0.52
+            # features.append(norm(e_ws, max_e_ws, min_e_ws) if test else e_ws)  # => when disabled, accuracy = 0.52
             
             if max_e_ws < e_ws: max_e_ws = e_ws
             if min_e_ws > e_ws: min_e_ws = e_ws
@@ -308,3 +402,4 @@ def test_demo2():
 
 if __name__ == '__main__':
     test_demo2()
+    #test_svm()
