@@ -1696,6 +1696,9 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         max_e_ws = 1.99436821463 if test else 0.0
         min_e_ws = -1.98262768094 if test else py.inf
         
+        self.max_e_cp = 3.06481157262 if test else -py.inf
+        self.min_e_cp = -3.14276278619 if test else py.inf
+        
         self.max_e_pred = 4.5 if test else 0.0
         self.min_e_pred = -4.5 if test else py.inf
         
@@ -1742,6 +1745,8 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                 cnt1 = float(touples[2][1:])
                 cnt2 = float(touples[3][:-1])
                 e_cnt = cnt1 - cnt2
+                if e_cnt == 0.0: 
+                    continue
                 # features.append(norm(e_cnt, max_e_cnt, min_e_cnt) if test else e_cnt)
                 
                 if max_e_cnt < e_cnt: max_e_cnt = e_cnt
@@ -1783,12 +1788,21 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                 if self.max_e_std < e_std: self.max_e_std = e_std
                 if self.min_e_std > e_std: self.min_e_std = e_std
                 
+                # conf * pred
+                cp1 = conf1 * pred1
+                cp2 = conf2 * pred2
+                e_cp = cp1 - cp2
+                # features.append(bpnn.norm(e_cp, self.max_e_cp, self.min_e_cp) if test else e_cp)
+                
+                if self.max_e_cp < e_cp: self.max_e_cp = e_cp
+                if self.min_e_cp > e_cp: self.min_e_cp = e_cp
+                
                 if line_num < 100:
                     test_data.append(features)
                     test_targets.append(target)
-                else:
-                    train_data.append(features)
-                    train_targets.append(target)
+                
+                train_data.append(features)
+                train_targets.append(target)
                 
                 line_num += 1
                 # if line_num >= 5000:
@@ -1798,7 +1812,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         max_accuracy_clf = 0
         for i in range(10):
             g = i * 0.1
-            clf = svm.NuSVC(kernel='rbf', gamma=g)
+            clf = svm.NuSVC(kernel='rbf', gamma=g, probability=True)
             clf.fit(train_data, train_targets)
             pred_targets = clf.predict(test_data)
             
@@ -1826,8 +1840,6 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         
         self.results += ',' + self.cluster_by + ',' + str(self.n_clusters) + ',' + str(self.max_depth) + ',' + str(self.alpha)
         
-        errors = []
-        feature_used = {} 
         count = 0
         
         ''' generate the best svm classification based on training data'''
@@ -1938,6 +1950,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         
         svm_clf = self.train_svm()                
         
+        errors = []
         for test_user in test:
             if test_user not in train: continue     
             
@@ -2032,18 +2045,22 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                         e_pred = f1['pred'] - f2['pred']
                         e_sim_cnt = f1['sim_cnt'] - f2['sim_cnt']
                         e_std = f1['std'] - f2['std']
+                        e_cp = f1['conf'] * f1['pred'] - f2['conf'] * f2['pred']
                         
                         features = []
                         features.append(bpnn.norm(e_conf, self.max_e_conf, self.min_e_conf));
                         features.append(bpnn.norm(e_sim_cnt, self.max_e_sim_cnt, self.min_e_sim_cnt));
                         features.append(bpnn.norm(e_pred, self.max_e_pred, self.min_e_pred));
                         features.append(bpnn.norm(e_std, self.max_e_std, self.min_e_std));
+                        # features.append(bpnn.norm(e_cp, self.max_e_cp, self.min_e_cp));
                         
-                        label = svm_clf.predict(features)
-                        if label == 0:
+                        '''label = svm_clf.predict(features)[0]
+                        if label == 0.0:
                             pred = min(preds)
-                        else:
-                            pred = max(preds)
+                        elif label == 1.0:
+                            pred = max(preds)'''
+                        probs = svm_clf.predict_proba(features)
+                        pred = py.average([min(preds), max(preds)], weights=[probs[0], probs[1]])
                     else:
                         pred = preds[0]
                         
