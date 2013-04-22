@@ -294,19 +294,175 @@ def test_svm():
             line_num += 1
             if line_num >= 2000:
                 break
-    clf = svm.SVC()
-    clf.fit(train_data, train_targets)
-    pred_targets = clf.predict(test_data)
-    
-    k = 0
-    for i in range(len(pred_targets)):
-        pred = pred_targets[i]
-        truth = test_targets[i]
+    for i in range(10):
+        g = i * 0.1
+        clf = svm.NuSVC(kernel='poly', gamma=g, coef0=100)
+        clf.fit(train_data, train_targets)
+        pred_targets = clf.predict(test_data)
         
-        if pred == truth:
-            k += 1
+        k = 0
+        for i in range(len(pred_targets)):
+            pred = pred_targets[i]
+            truth = test_targets[i]
+            
+            if pred == truth:
+                k += 1
+        
+        print 'gamma =', g, ', accuracy =', float(k) / len(test_targets)
+        
+def test_svm2():
+    train_data = [] 
+    train_targets = []
     
-    print 'accuracy =', float(k) / len(test_targets)
+    test_data = []
+    test_targets = []
+    
+    test = True
+    dataset = 'flixster'
+    max_e_cnt = 34.0 if test else 0.0
+    min_e_cnt = -31.0 if test else py.inf
+    
+    max_e_sim_cnt = 22.0 if test else 0.0
+    min_e_sim_cnt = -30.0 if test else py.inf
+    
+    max_e_trust_cnt = 36.0 if test else 0.0
+    min_e_trust_cnt = -37.0 if test else py.inf
+    
+    max_e_ws = 1.91766293548 if test else -py.inf
+    min_e_ws = -1.94491118252 if test else py.inf
+    
+    max_e_pred = 4.5 if test else 0.0
+    min_e_pred = -4.5 if test else py.inf
+    
+    # TODO: 
+    max_e_cp = 3.00743449594 if test else -py.inf
+    min_e_cp = -3.16453079404 if test else py.inf
+    
+    max_e_std = 2.25 if test else 0.0
+    min_e_std = -2.25 if test else py.inf
+    
+    max_e_conf = 0.647055770484 if test else 0.0
+    min_e_conf = -0.611959124809 if test else py.inf
+    
+    with open(dataset + '_features.txt') as f:
+        line_num = 0
+        for line in f:
+            line = line.strip()
+            if not line: continue
+            if line[0] == '#':
+                print 'commenting line'
+                continue
+            
+            features = []
+            touples = line.split(',')
+            
+            # targets
+            target = float(touples[14])
+            
+            # avg_weights
+            avg_w1 = float(touples[12][1:])
+            avg_w2 = float(touples[13][:-1])
+            e_ws = avg_w1 - avg_w2
+            # features.append(norm(e_ws, max_e_ws, min_e_ws) if test else e_ws)  # => when disabled, accuracy = 0.52
+            
+            if max_e_ws < e_ws: max_e_ws = e_ws
+            if min_e_ws > e_ws: min_e_ws = e_ws
+            
+            # conf
+            conf1 = float(touples[10][1:])
+            conf2 = float(touples[11][:-1])
+            e_conf = conf1 - conf2
+            features.append(norm(e_conf, max_e_conf, min_e_conf) if test else e_conf)
+            
+            if max_e_conf < e_conf: max_e_conf = e_conf
+            if min_e_conf > e_conf: min_e_conf = e_conf
+            
+            # total_cnt
+            cnt1 = float(touples[2][1:])
+            cnt2 = float(touples[3][:-1])
+            e_cnt = cnt1 - cnt2
+            # features.append(norm(e_cnt, max_e_cnt, min_e_cnt) if test else e_cnt)
+            
+            if max_e_cnt < e_cnt: max_e_cnt = e_cnt
+            if min_e_cnt > e_cnt: min_e_cnt = e_cnt
+            
+            # sim_cnt
+            sim_cnt1 = float(touples[6][1:])
+            sim_cnt2 = float(touples[7][:-1])
+            e_sim_cnt = sim_cnt1 - sim_cnt2
+            features.append(norm(e_sim_cnt, max_e_sim_cnt, min_e_sim_cnt) if test else e_cnt)
+            
+            if max_e_sim_cnt < e_sim_cnt: max_e_sim_cnt = e_sim_cnt
+            if min_e_sim_cnt > e_sim_cnt: min_e_sim_cnt = e_sim_cnt
+            
+            # trust_cnt
+            trust_cnt1 = float(touples[8][1:])
+            trust_cnt2 = float(touples[9][:-1])
+            e_trust_cnt = trust_cnt1 - trust_cnt2
+            # features.append(norm(e_trust_cnt, max_e_trust_cnt, min_e_trust_cnt) if test else e_cnt)
+            
+            if max_e_trust_cnt < e_trust_cnt: max_e_trust_cnt = e_trust_cnt
+            if min_e_trust_cnt > e_trust_cnt: min_e_trust_cnt = e_trust_cnt
+            
+            # preds
+            pred1 = float(touples[4][1:])
+            pred2 = float(touples[5][:-1])
+            e_pred = pred1 - pred2
+            features.append(norm(e_pred, max_e_pred, min_e_pred) if test else e_pred)
+            
+            if max_e_pred < e_pred: max_e_pred = e_pred
+            if min_e_pred > e_pred: min_e_pred = e_pred
+            
+            # conf * pred
+            cp1 = conf1 * pred1
+            cp2 = conf2 * pred2
+            e_cp = cp1 - cp2
+            features.append(norm(e_cp, max_e_cp, min_e_cp) if test else e_cp)
+            
+            if max_e_cp < e_cp: max_e_cp = e_cp
+            if min_e_cp > e_cp: min_e_cp = e_cp
+            
+            # std
+            std1 = float(touples[0][1:])
+            std2 = float(touples[1][:-1])
+            e_std = std1 - std2
+            features.append(norm(e_std, max_e_std, min_e_std) if test else e_std)
+            
+            if max_e_std < e_std: max_e_std = e_std
+            if min_e_std > e_std: min_e_std = e_std
+            
+            if line_num < 100:
+                test_data.append(features)
+                test_targets.append(target)
+            else:
+                train_data.append(features)
+                train_targets.append(target)
+            
+            line_num += 1
+            # if line_num >= 5000:
+            #    break
+    max_accuracy = 0
+    max_accuracy_gamma = 0
+    for i in range(11):
+        g = i * 0.1
+        clf = svm.NuSVC(kernel='rbf', gamma=g)
+        clf.fit(train_data, train_targets)
+        pred_targets = clf.predict(test_data)
+        
+        k = 0
+        for i in range(len(pred_targets)):
+            pred = pred_targets[i]
+            truth = test_targets[i]
+            
+            if pred == truth:
+                k += 1
+        accuracy = float(k) / len(test_targets)
+        print 'gamma =', g, ', accuracy =', accuracy
+        if max_accuracy < accuracy:
+            max_accuracy = accuracy
+            max_accuracy_gamma = g
+    
+    print '\nbest accuracy =', max_accuracy, ', best gamma =', max_accuracy_gamma
 
 def test_demo2():
     
@@ -401,5 +557,5 @@ def test_demo2():
     print 'best testing accuracy =', max_accuracy, ', with threshold =', max_theta
 
 if __name__ == '__main__':
-    test_demo2()
-    #test_svm()
+    # test_demo2()
+    test_svm2()
