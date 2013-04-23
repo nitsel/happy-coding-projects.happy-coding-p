@@ -10,6 +10,10 @@ import math
 import random
 import numpy as py
 from sklearn import svm
+import milk.supervised.adaboost as adaboost
+import milk.supervised.svm as svm2
+import milk.supervised.tree as tree
+import milk.supervised.multi as multi
 
 random.seed(0)
 
@@ -211,113 +215,12 @@ def test_demo():
     # test it
     n.test(pat)
 
-def norm(val, max_range, min_range):
-    
-    return (val - min_range) / (max_range - min_range)   
-
-def test_svm():
+def prepare_data(expending=True):
     train_data = [] 
     train_targets = []
     
     test_data = []
     test_targets = []
-    
-    test = True
-    max_e_cnt = 22.0 if test else 0.0
-    min_e_cnt = -21.0 if test else py.inf
-    
-    max_e_ws = 1.63052828876 if test else 0.0
-    min_e_ws = -1.84894243415 if test else py.inf
-    
-    max_e_pred = 3.68294309876 if test else 0.0
-    min_e_pred = -4.5 if test else py.inf
-    
-    max_e_conf = 0.586835439012 if test else 0.0
-    min_e_conf = 3.68294309876 if test else py.inf
-    
-    with open('features.txt') as f:
-        line_num = 0
-        for line in f:
-            line = line.strip()
-            if not line: continue
-            
-            features = []
-            
-            touples = line.split(',')
-            
-            # targets
-            target = float(touples[12])
-            
-            # avg_weights
-            avg_w1 = float(touples[0][1:])
-            avg_w2 = float(touples[1][:-1])
-            e_ws = avg_w1 - avg_w2
-            features.append(norm(e_ws, max_e_ws, min_e_ws) if test else e_ws)  # => when disabled, accuracy = 0.52
-            
-            if max_e_ws < e_ws: max_e_ws = e_ws
-            if min_e_ws > e_ws: min_e_ws = e_ws
-            
-            # conf
-            conf1 = float(touples[2][1:])
-            conf2 = float(touples[3][:-1])
-            e_conf = conf1 - conf2
-            features.append(norm(e_conf, max_e_conf, min_e_conf) if test else e_conf)
-            
-            if max_e_conf < e_conf: max_e_conf = e_conf
-            if min_e_conf > e_conf: min_e_conf = e_conf
-            
-            # total_cnt
-            cnt1 = float(touples[8][1:])
-            cnt2 = float(touples[9][:-1])
-            e_cnt = cnt1 - cnt2
-            features.append(norm(e_cnt, max_e_cnt, min_e_cnt) if test else e_cnt)
-            
-            if max_e_cnt < e_cnt: max_e_cnt = e_cnt
-            if min_e_cnt > e_cnt: min_e_cnt = e_cnt
-            
-            # preds
-            pred1 = float(touples[10][1:])
-            pred2 = float(touples[11][:-1])
-            e_pred = pred1 - pred2
-            # features.append(norm(e_pred, max_e_pred, min_e_pred) if test else e_pred)
-            
-            if max_e_pred < e_pred: max_e_pred = e_pred
-            if min_e_pred > e_pred: min_e_pred = e_pred
-            
-            if line_num < 100:
-                test_data.append(features)
-                test_targets.append(target)
-            else:
-                train_data.append(features)
-                train_targets.append(target)
-            
-            line_num += 1
-            if line_num >= 5000:
-                break
-    for i in range(10):
-        g = i * 0.1
-        clf = svm.NuSVC(kernel='poly', gamma=g, coef0=100)
-        clf.fit(train_data, train_targets)
-        pred_targets = clf.predict(test_data)
-        
-        k = 0
-        for i in range(len(pred_targets)):
-            pred = pred_targets[i]
-            truth = test_targets[i]
-            
-            if pred == truth:
-                k += 1
-        
-        print 'gamma =', g, ', accuracy =', float(k) / len(test_targets)
-        
-def test_svm2():
-    train_data = [] 
-    train_targets = []
-    
-    test_data = []
-    test_targets = []
-    
-    # TODO: 
     with open('flixster_features.txt') as f:
         line_num = 0
         for line in f:
@@ -330,57 +233,68 @@ def test_svm2():
             features = []
             touples = line.split(',')
             
-            # targets
-            target = float(touples[14])
-            
             '''Basic features'''
             # avg_weights
             avg_w1 = float(touples[12][1:])
             avg_w2 = float(touples[13][:-1])
             e_ws = avg_w1 - avg_w2
-            #features.append(e_ws)
+            features.append(e_ws)  # => 0.51, 0.559
             
             # conf
             conf1 = float(touples[10][1:])
             conf2 = float(touples[11][:-1])
             e_conf = conf1 - conf2
-            #features.append(e_conf)
+            features.append(e_conf)  # => 0.543
             
             # total_cnt
             cnt1 = float(touples[2][1:])
             cnt2 = float(touples[3][:-1])
             e_cnt = cnt1 - cnt2
-            #if cnt1 == 1.0 and cnt2 == 1.0:
+            # if cnt1 != 1.0 and cnt2 != 1.0:
             #    continue
-            # features.append(e_cnt)
+            # features.append(e_cnt)  # => 0.537, 0.555, (0.548)
             
             # sim_cnt
             sim_cnt1 = float(touples[6][1:])
             sim_cnt2 = float(touples[7][:-1])
             e_sim_cnt = sim_cnt1 - sim_cnt2
-            # features.append(e_sim_cnt)
+            # features.append(e_sim_cnt)  # =>0.5258, 0.549, (0.545)
             
             # trust_cnt
             trust_cnt1 = float(touples[8][1:])
             trust_cnt2 = float(touples[9][:-1])
             e_trust_cnt = trust_cnt1 - trust_cnt2
-            # features.append(e_trust_cnt)
+            # features.append(e_trust_cnt)  # =>0.533, 0.544, (0.553), (0.545)
             
             r1 = max([sim_cnt1, sim_cnt2])
             r2 = max([trust_cnt1, trust_cnt2])
-            #features.append(r1 / (r1 + r2))
+            # features.append(r1 / (r1 + r2)) #=>0.524, 0.541, (0.518), (0.533)
             
             # preds
             pred1 = float(touples[4][1:])
             pred2 = float(touples[5][:-1])
             e_pred = pred1 - pred2
-            features.append(e_pred)
+            features.append(e_pred)  # =>0.518, 0.552, (0.546, ), (0.549,)
             
             # std
             std1 = float(touples[0][1:])
             std2 = float(touples[1][:-1])
             e_std = std1 - std2
-            features.append(e_std)
+            features.append(e_std)  # =>0.512, 0.548, (0.543), (0.541)
+            
+            # targets
+            label = float(touples[14])
+            if label == 1.0:  # adopt greater prediction
+                if pred1 < pred2:
+                    target = 1
+                else:
+                    target = 0
+            else:
+                if pred1 < pred2:
+                    target = 0
+                else:
+                    target = 1
+            
             
             if line_num < 1000:
                 test_data.append(features)
@@ -426,37 +340,161 @@ def test_svm2():
             vec_features[i] = norm_val
     
     print 'number of features before expending:', len(features)
-    # expending basic features
-    ''' Expending basic features '''
-    for features in train_data: 
-        appending_features = []
-        m = len(features)
-        for x in range(m - 1):
-            fx = features[x]
-            for y in range(x + 1, m):
-                fy = features[y]
-                appending_features.append(fx + fy)
-                appending_features.append(abs(fx - fy))
-                #appending_features.append(fx - fy)
-        
-        features.extend(appending_features)
-        
-        
-    for features in test_data: 
-        appending_features = []
-        m = len(features)
-        for x in range(m - 1):
-            fx = features[x]
-            for y in range(x + 1, m):
-                fy = features[y]
-                appending_features.append(fx + fy)
-                appending_features.append(abs(fx - fy))
-                #appending_features.append(fx - fy)
-        
-        features.extend(appending_features)
     
-    print 'number of features after expending:', len(features)
-    # re-normalization: 
+    if expending:
+        # expending basic features
+        ''' Expending basic features '''
+        for features in train_data: 
+            appending_features = []
+            m = len(features)
+            for x in range(m - 1):
+                fx = features[x]
+                for y in range(x + 1, m):
+                    fy = features[y]
+                    appending_features.append(fx + fy)
+                    # appending_features.append(abs(fx - fy))
+                    # appending_features.append(fx - fy)
+            
+            features.extend(appending_features)
+            
+            
+        for features in test_data: 
+            appending_features = []
+            m = len(features)
+            for x in range(m - 1):
+                fx = features[x]
+                for y in range(x + 1, m):
+                    fy = features[y]
+                    appending_features.append(fx + fy)
+                    # appending_features.append(abs(fx - fy))
+                    # appending_features.append(fx - fy)
+            
+            features.extend(appending_features)
+        
+        print 'number of features after expending:', len(features)
+        # re-normalization: 
+        max_norms = []
+        min_norms = []
+        
+        for i in range(len(features)):
+            max_norms.append(-py.inf)
+            min_norms.append(py.Inf)
+            
+        for vec_features in train_data:
+            for i in range(len(vec_features)):
+                val = vec_features[i]
+                if max_norms[i] < val: max_norms[i] = val
+                if min_norms[i] > val: min_norms[i] = val
+        
+        # normalize the features values to [0, 1]
+        for vec_features in train_data: 
+            for i in range(len(vec_features)):
+                val = vec_features[i]
+                max_val = max_norms[i]
+                min_val = min_norms[i]
+                norm_val = (val - min_val) / (max_val - min_val)
+                vec_features[i] = norm_val    
+                
+        for vec_features in test_data: 
+            for i in range(len(vec_features)):
+                val = vec_features[i]
+                max_val = max_norms[i]
+                min_val = min_norms[i]
+                norm_val = (val - min_val) / (max_val - min_val)
+                vec_features[i] = norm_val
+            
+    return  train_data, train_targets, test_data, test_targets
+        
+def prepare_nn_data(expending=True):
+    train_data = [] 
+    test_data = []
+    
+    with open('flixster_features.txt') as f:
+        line_num = 0
+        for line in f:
+            line = line.strip()
+            if not line: continue
+            if line[0] == '#':
+                print 'commenting line'
+                continue
+            
+            features = []
+            touples = line.split(',')
+            
+            '''Basic features'''
+            # avg_weights
+            avg_w1 = float(touples[12][1:])
+            avg_w2 = float(touples[13][:-1])
+            e_ws = avg_w1 - avg_w2
+            features.append(e_ws)  # => 0.51, 0.559
+            
+            # conf
+            conf1 = float(touples[10][1:])
+            conf2 = float(touples[11][:-1])
+            e_conf = conf1 - conf2
+            features.append(e_conf)  # => 0.543
+            
+            # total_cnt
+            cnt1 = float(touples[2][1:])
+            cnt2 = float(touples[3][:-1])
+            e_cnt = cnt1 - cnt2
+            # if cnt1 != 1.0 and cnt2 != 1.0:
+            #    continue
+            # features.append(e_cnt)  # => 0.537, 0.555, (0.548)
+            
+            # sim_cnt
+            sim_cnt1 = float(touples[6][1:])
+            sim_cnt2 = float(touples[7][:-1])
+            e_sim_cnt = sim_cnt1 - sim_cnt2
+            # features.append(e_sim_cnt)  # =>0.5258, 0.549, (0.545)
+            
+            # trust_cnt
+            trust_cnt1 = float(touples[8][1:])
+            trust_cnt2 = float(touples[9][:-1])
+            e_trust_cnt = trust_cnt1 - trust_cnt2
+            # features.append(e_trust_cnt)  # =>0.533, 0.544, (0.553), (0.545)
+            
+            r1 = max([sim_cnt1, sim_cnt2])
+            r2 = max([trust_cnt1, trust_cnt2])
+            # features.append(r1 / (r1 + r2)) #=>0.524, 0.541, (0.518), (0.533)
+            
+            # preds
+            pred1 = float(touples[4][1:])
+            pred2 = float(touples[5][:-1])
+            e_pred = pred1 - pred2
+            features.append(e_pred)  # =>0.518, 0.552, (0.546, ), (0.549,)
+            
+            # std
+            std1 = float(touples[0][1:])
+            std2 = float(touples[1][:-1])
+            e_std = std1 - std2
+            features.append(e_std)  # =>0.512, 0.548, (0.543), (0.541)
+            
+            # targets
+            label = float(touples[14])
+            if label == 1.0:  # adopt greater prediction
+                if pred1 < pred2:
+                    target = 1
+                else:
+                    target = 0
+            else:
+                if pred1 < pred2:
+                    target = 0
+                else:
+                    target = 1
+            
+            
+            if line_num < 1000:
+                test_data.append([features, [target]])
+            else:
+                train_data.append([features, [target]])
+            
+            line_num += 1
+            if line_num >= 6000:
+                break
+    
+    # normalization
+    # step 1: find the maximum and minimum for each attribute
     max_norms = []
     min_norms = []
     
@@ -465,27 +503,107 @@ def test_svm2():
         min_norms.append(py.Inf)
         
     for vec_features in train_data:
-        for i in range(len(vec_features)):
-            val = vec_features[i]
+        for i in range(len(vec_features[0])):
+            val = vec_features[0][i]
             if max_norms[i] < val: max_norms[i] = val
             if min_norms[i] > val: min_norms[i] = val
     
-    # normalize the features values to [0, 1]
+    # step 2: normalize the features values to [0, 1]
     for vec_features in train_data: 
-        for i in range(len(vec_features)):
-            val = vec_features[i]
+        for i in range(len(vec_features[0])):
+            val = vec_features[0][i]
             max_val = max_norms[i]
             min_val = min_norms[i]
             norm_val = (val - min_val) / (max_val - min_val)
-            vec_features[i] = norm_val    
+            vec_features[0][i] = norm_val    
             
     for vec_features in test_data: 
-        for i in range(len(vec_features)):
-            val = vec_features[i]
+        for i in range(len(vec_features[0])):
+            val = vec_features[0][i]
             max_val = max_norms[i]
             min_val = min_norms[i]
             norm_val = (val - min_val) / (max_val - min_val)
-            vec_features[i] = norm_val
+            vec_features[0][i] = norm_val
+    
+    print 'number of features before expending:', len(features)
+    
+    if expending:
+        # expending basic features
+        ''' Expending basic features '''
+        for vec_features in train_data: 
+            features = vec_features[0]
+            appending_features = []
+            m = len(features)
+            for x in range(m - 1):
+                fx = features[x]
+                for y in range(x + 1, m):
+                    fy = features[y]
+                    appending_features.append(fx + fy)
+                    # appending_features.append(abs(fx - fy))
+                    # appending_features.append(fx - fy)
+            
+            features.extend(appending_features)
+            
+            
+        for vec_features in test_data: 
+            features = vec_features[0]
+            appending_features = []
+            m = len(features)
+            for x in range(m - 1):
+                fx = features[x]
+                for y in range(x + 1, m):
+                    fy = features[y]
+                    appending_features.append(fx + fy)
+                    # appending_features.append(abs(fx - fy))
+                    # appending_features.append(fx - fy)
+            
+            features.extend(appending_features)
+        
+        print 'number of features after expending:', len(features)
+        # re-normalization: 
+        max_norms = []
+        min_norms = []
+        
+        for i in range(len(features)):
+            max_norms.append(-py.inf)
+            min_norms.append(py.Inf)
+            
+        for vec_features in train_data:
+            for i in range(len(vec_features[0])):
+                val = vec_features[0][i]
+                if max_norms[i] < val: max_norms[i] = val
+                if min_norms[i] > val: min_norms[i] = val
+        
+        # normalize the features values to [0, 1]
+        for vec_features in train_data: 
+            for i in range(len(vec_features[0])):
+                val = vec_features[0][i]
+                max_val = max_norms[i]
+                min_val = min_norms[i]
+                norm_val = (val - min_val) / (max_val - min_val)
+                vec_features[0][i] = norm_val    
+                
+        for vec_features in test_data: 
+            for i in range(len(vec_features[0])):
+                val = vec_features[0][i]
+                max_val = max_norms[i]
+                min_val = min_norms[i]
+                norm_val = (val - min_val) / (max_val - min_val)
+                vec_features[0][i] = norm_val
+            
+    return  train_data, test_data
+
+def test_nn():
+    train_data, test_data = prepare_nn_data()    
+    
+    num = len(train_data[0][0])
+    n = NN(num, 2 * num, 1)
+    n.train(train_data, iterations=100, N=0.1, M=0.02)
+    n.test(test_data)
+     
+def test_svm():
+    
+    train_data, train_targets, test_data, test_targets = prepare_data()
     
     max_accuracy = 0
     max_accuracy_gamma = 0
@@ -512,98 +630,30 @@ def test_svm2():
     
     print '\nBest accuracy =', max_accuracy, ', best gamma =', max_accuracy_gamma
     
-def test_demo2():
+def test_adaboost():
+    train_data, train_targets, test_data, test_targets = prepare_data(expending=True) 
     
-    train_data = [] 
-    test_data = []
-    
-    test = True
-    max_e_cnt = 22.0 if test else 0.0
-    min_e_cnt = -21.0 if test else py.inf
-    
-    max_e_ws = 1.63052828876 if test else 0.0
-    min_e_ws = -1.84894243415 if test else py.inf
-    
-    max_e_pred = 3.68294309876 if test else 0.0
-    min_e_pred = -4.5 if test else py.inf
-    
-    max_e_conf = 0.586835439012 if test else 0.0
-    min_e_conf = 3.68294309876 if test else py.inf
-    
-    with open('features.txt') as f:
-        line_num = 0
-        for line in f:
-            line = line.strip()
-            if not line: continue
+    for j in range(1, 11):
+        sigma = 0.1 * j
+        # weak = svm2.svm_raw(kernel=svm2.rbf_kernel(sigma=sigma), C=-1)
+        weak = svm2.svm_raw(kernel=svm2.rbf_kernel(sigma=sigma), C= -1)
+        # weak = tree.stump_learner()
+        learner = adaboost.boost_learner(weak, 20)
+        learner = multi.one_against_one(learner)
+        model = learner.train(train_data, train_targets, normalisedlabels=True)
+        
+        correct = 0
+        for i in range(len(test_data)):
+            pred = model.apply(test_data[i])
+            target = test_targets[i]
             
-            features = []
-            targets = []
-            
-            touples = line.split(',')
-            
-            # targets
-            target = float(touples[12])
-            targets.append(target)
-            
-            # avg_weights
-            avg_w1 = float(touples[0][1:])
-            avg_w2 = float(touples[1][:-1])
-            e_ws = avg_w1 - avg_w2
-            # features.append(norm(e_ws, max_e_ws, min_e_ws) if test else e_ws)  # => when disabled, accuracy = 0.52
-            
-            if max_e_ws < e_ws: max_e_ws = e_ws
-            if min_e_ws > e_ws: min_e_ws = e_ws
-            
-            # conf
-            conf1 = float(touples[2][1:])
-            conf2 = float(touples[3][:-1])
-            e_conf = conf1 - conf2
-            features.append(norm(e_conf, max_e_conf, min_e_conf) if test else e_conf)
-            
-            if max_e_conf < e_conf: max_e_conf = e_conf
-            if min_e_conf > e_conf: min_e_conf = e_conf
-            
-            # total_cnt
-            cnt1 = float(touples[8][1:])
-            cnt2 = float(touples[9][:-1])
-            e_cnt = cnt1 - cnt2
-            # features.append(norm(e_cnt, max_e_cnt, min_e_cnt) if test else e_cnt)
-            
-            if max_e_cnt < e_cnt: max_e_cnt = e_cnt
-            if min_e_cnt > e_cnt: min_e_cnt = e_cnt
-            
-            # preds
-            pred1 = float(touples[10][1:])
-            pred2 = float(touples[11][:-1])
-            e_pred = pred1 - pred2
-            features.append(norm(e_pred, max_e_pred, min_e_pred) if test else e_pred)
-            
-            if max_e_pred < e_pred: max_e_pred = e_pred
-            if min_e_pred > e_pred: min_e_pred = e_pred
-            
-            data = []
-            data.append(features)
-            data.append(targets)
-            
-            if line_num < 100:
-                test_data.append(data)
-            else:
-                train_data.append(data)
-            
-            line_num += 1
-            if line_num >= 2000:
-                break
-    
-    nodes = len(features)
-    n = NN(nodes, 10, 1)
-    n.train(train_data, iterations=10000, N=0.1, M=0.05)
-    
-    max_accuracy, max_theta = n.test(train_data)
-    print 'best training accuracy =', max_accuracy, ', with threshold =', max_theta
-    
-    max_accuracy, max_theta = n.test(test_data)
-    print 'best testing accuracy =', max_accuracy, ', with threshold =', max_theta
-
+            if pred == target:
+                correct += 1
+        
+        print 'Sigma =', sigma, ', accuracy =', float(correct) / len(test_data)
+        
 if __name__ == '__main__':
     # test_demo2()
-    test_svm2()
+    # test_svm()
+    # test_adaboost()
+    test_nn()

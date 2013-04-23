@@ -1676,164 +1676,6 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         
         return {k: list(set(sim_clusters[k]) | set(trust_clusters[k])) for k in range(K)}, sim_clusters, trust_clusters
     
-    def train_svm(self):
-        train_data = [] 
-        train_targets = []
-        
-        test_data = []
-        test_targets = []
-        
-        test = True
-        max_e_cnt = 30.0 if test else 0.0
-        min_e_cnt = -29.0 if test else py.inf
-        
-        self.max_e_sim_cnt = 16.0 if test else 0.0
-        self.min_e_sim_cnt = -16.0 if test else py.inf
-        
-        max_e_trust_cnt = 31.0 if test else 0.0
-        min_e_trust_cnt = -32.0 if test else py.inf
-        
-        max_e_ws = 1.99436821463 if test else 0.0
-        min_e_ws = -1.98262768094 if test else py.inf
-        
-        self.max_e_cp = 3.06481157262 if test else -py.inf
-        self.min_e_cp = -3.14276278619 if test else py.inf
-        
-        self.max_e_pred = 4.5 if test else 0.0
-        self.min_e_pred = -4.5 if test else py.inf
-        
-        self.max_e_std = 2.25 if test else 0.0
-        self.min_e_std = -2.25 if test else py.inf
-        
-        self.max_e_conf = 0.642205697509 if test else 0.0
-        self.min_e_conf = -0.631444637895 if test else py.inf
-        
-        with open('results.txt') as f:
-            line_num = 0
-            for line in f:
-                line = line.strip()
-                if not line: continue
-                if line[0] == '#':
-                    print 'commenting line'
-                    continue
-                
-                features = []
-                touples = line.split(',')
-                
-                # targets
-                target = float(touples[14])
-                
-                # avg_weights
-                avg_w1 = float(touples[12][1:])
-                avg_w2 = float(touples[13][:-1])
-                e_ws = avg_w1 - avg_w2
-                # features.append(norm(e_ws, max_e_ws, min_e_ws) if test else e_ws)  # => when disabled, accuracy = 0.52
-                
-                if max_e_ws < e_ws: max_e_ws = e_ws
-                if min_e_ws > e_ws: min_e_ws = e_ws
-                
-                # conf
-                conf1 = float(touples[10][1:])
-                conf2 = float(touples[11][:-1])
-                e_conf = conf1 - conf2
-                features.append(bpnn.norm(e_conf, self.max_e_conf, self.min_e_conf) if test else e_conf)
-                
-                if self.max_e_conf < e_conf: self.max_e_conf = e_conf
-                if self.min_e_conf > e_conf: self.min_e_conf = e_conf
-                
-                # total_cnt
-                cnt1 = float(touples[2][1:])
-                cnt2 = float(touples[3][:-1])
-                e_cnt = cnt1 - cnt2
-                if e_cnt == 0.0: 
-                    continue
-                # features.append(norm(e_cnt, max_e_cnt, min_e_cnt) if test else e_cnt)
-                
-                if max_e_cnt < e_cnt: max_e_cnt = e_cnt
-                if min_e_cnt > e_cnt: min_e_cnt = e_cnt
-                
-                # sim_cnt
-                sim_cnt1 = float(touples[6][1:])
-                sim_cnt2 = float(touples[7][:-1])
-                e_sim_cnt = sim_cnt1 - sim_cnt2
-                features.append(bpnn.norm(e_sim_cnt, self.max_e_sim_cnt, self.min_e_sim_cnt) if test else e_cnt)
-                
-                if self.max_e_sim_cnt < e_sim_cnt: self.max_e_sim_cnt = e_sim_cnt
-                if self.min_e_sim_cnt > e_sim_cnt: self.min_e_sim_cnt = e_sim_cnt
-                
-                # trust_cnt
-                trust_cnt1 = float(touples[8][1:])
-                trust_cnt2 = float(touples[9][:-1])
-                e_trust_cnt = trust_cnt1 - trust_cnt2
-                # features.append(norm(e_trust_cnt, max_e_trust_cnt, min_e_trust_cnt) if test else e_cnt)
-                
-                if max_e_trust_cnt < e_trust_cnt: max_e_trust_cnt = e_trust_cnt
-                if min_e_trust_cnt > e_trust_cnt: min_e_trust_cnt = e_trust_cnt
-                
-                # preds
-                pred1 = float(touples[4][1:])
-                pred2 = float(touples[5][:-1])
-                e_pred = pred1 - pred2
-                features.append(bpnn.norm(e_pred, self.max_e_pred, self.min_e_pred) if test else e_pred)
-                
-                if self.max_e_pred < e_pred: self.max_e_pred = e_pred
-                if self.min_e_pred > e_pred: self.min_e_pred = e_pred
-                
-                # std
-                std1 = float(touples[0][1:])
-                std2 = float(touples[1][:-1])
-                e_std = std1 - std2
-                features.append(bpnn.norm(e_std, self.max_e_std, self.min_e_std) if test else e_std)
-                
-                if self.max_e_std < e_std: self.max_e_std = e_std
-                if self.min_e_std > e_std: self.min_e_std = e_std
-                
-                # conf * pred
-                cp1 = conf1 * pred1
-                cp2 = conf2 * pred2
-                e_cp = cp1 - cp2
-                # features.append(bpnn.norm(e_cp, self.max_e_cp, self.min_e_cp) if test else e_cp)
-                
-                if self.max_e_cp < e_cp: self.max_e_cp = e_cp
-                if self.min_e_cp > e_cp: self.min_e_cp = e_cp
-                
-                if line_num < 100:
-                    test_data.append(features)
-                    test_targets.append(target)
-                
-                train_data.append(features)
-                train_targets.append(target)
-                
-                line_num += 1
-                # if line_num >= 5000:
-                #    break
-        max_accuracy = 0
-        max_accuracy_gamma = 0
-        max_accuracy_clf = 0
-        for i in range(10):
-            g = i * 0.1
-            clf = svm.NuSVC(kernel='rbf', gamma=g, probability=True)
-            clf.fit(train_data, train_targets)
-            pred_targets = clf.predict(test_data)
-            
-            k = 0
-            for i in range(len(pred_targets)):
-                pred = pred_targets[i]
-                truth = test_targets[i]
-                
-                if pred == truth:
-                    k += 1
-            accuracy = float(k) / len(test_targets)
-            print 'gamma =', g, ', accuracy =', accuracy
-            
-            if max_accuracy < accuracy:
-                max_accuracy = accuracy
-                max_accuracy_gamma = g
-                max_accuracy_clf = clf
-        
-        print '\nbest accuracy =', max_accuracy, ', best gamma =', max_accuracy_gamma
-        return max_accuracy_clf;
-    
     def cross_over(self, train, test):
         
         clusters, sim_clusters, trust_clusters = self.Multiview_Kmedoids(train, self.n_clusters)
@@ -1841,115 +1683,6 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         self.results += ',' + self.cluster_by + ',' + str(self.n_clusters) + ',' + str(self.max_depth) + ',' + str(self.alpha)
         
         count = 0
-        
-        ''' generate the best svm classification based on training data'''
-        for train_user in train:
-            cluster_ids = [] 
-            for c_id, c_ms in clusters.viewitems():
-                if train_user in c_ms:
-                    cluster_ids.append(c_id)
-            
-            if not cluster_ids:
-                # print 'cannot find the cluster for test user', test_user
-                continue
-            
-            for test_item in train[train_user]:
-                preds = []
-                features = []
-                
-                for cluster_id in cluster_ids:
-                    candidates = [m for m in clusters[cluster_id] if m != train_user and test_item in train[m]]
-                    rates = []
-                    ws = []
-                    
-                    sim_cnt = 0
-                    trust_cnt = 0
-                    total_cnt = 0
-                    for m in candidates:
-                        sim = 1 - self.rating_dist[train_user][m] if train_user in self.rating_dist and m in self.rating_dist[train_user] else py.nan
-                        t = 1 - self.trust_dist[train_user][m] if train_user in self.trust_dist and m in self.trust_dist[train_user] else 0
-                        
-                        if not py.isnan(sim) and 1 + sim > 0:
-
-                            if t > 0:
-                                w = stats.hmean([1 + sim, 1 + t])
-                            else:
-                                w = 1 + sim
-                                
-                            if w > 0:
-                                ws.append(w)
-                                rates.append(train[m][test_item])
-                                
-                                if m in sim_clusters[cluster_id]:
-                                    sim_cnt += 1
-                                
-                                if m in trust_clusters[cluster_id]:
-                                    trust_cnt += 1
-                                
-                                total_cnt += 1
-                            
-                    if rates:
-                        # k-NN methods: find top-k most similar users according to their weights
-                        if self.knn > 0:
-                            sorted_ws = sorted(enumerate(ws), reverse=True, key=operator.itemgetter(1))[:self.knn]
-                            indeces = [item[0] for item in sorted_ws]
-                            ws = [ws[index] for index in indeces]
-                            rates = [rates[index] for index in indeces]
-                            
-                        pred = py.average(rates, weights=ws)
-                        preds.append(pred)
-                        
-                        if len(cluster_ids) > 1:
-                            '''compute feature for confidence of prediction'''
-                            
-                            params = {}
-                            # average similarity:
-                            params['avg_weight'] = py.mean(ws)
-                            params['conf'] = calc_confidence(rates)
-                            params['pred'] = pred
-                            params['sim_cnt'] = sim_cnt
-                            params['std'] = py.std(rates)
-                            params['total_cnt'] = total_cnt
-                            params['trust_cnt'] = trust_cnt
-                            
-                            features.append(params)
-                if preds:
-                    truth = train[train_user][test_item]
-                    
-                    if len(preds) > 1:
-                        count += 1
-                        f1 = features[0]
-                        f2 = features[1]
-
-                        e1 = abs(preds[0] - truth)
-                        e2 = abs(preds[1] - truth)
-                        
-                        f = ''
-                        i = 0
-                        for key, val in f1.viewitems():
-                            if i > 0: f += ','
-                            i += 1
-                            f += '(' + str(val) + ',' + str(f2[key]) + ')'
-                                
-                        if e1 < e2:
-                            pred = preds[0]
-                            
-                            if preds[0] < preds[1]:
-                                logs.info(f + ', 0')  # choose the smaller one 
-                            else:
-                                logs.info(f + ', 1')  # choose the larger one
-                        else:
-                            pred = preds[1]
-                            
-                            if preds[1] < preds[0]:
-                                logs.info(f + ', 0')  # choose the smaller one 
-                            else:
-                                logs.info(f + ', 1')  # choose the larger one
-                    else:
-                        pred = preds[0]
-        
-        svm_clf = self.train_svm()                
-        
         errors = []
         for test_user in test:
             if test_user not in train: continue     
@@ -2029,6 +1762,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                             params['std'] = py.std(rates)
                             params['total_cnt'] = total_cnt
                             params['trust_cnt'] = trust_cnt
+                            params['weight'] = params['conf'] / (1 + params['std'])
                             
                             features.append(params)
                 if preds:
@@ -2041,26 +1775,9 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                         f1 = features[0]
                         f2 = features[1]
                         
-                        e_conf = f1['conf'] - f2['conf']
-                        e_pred = f1['pred'] - f2['pred']
-                        e_sim_cnt = f1['sim_cnt'] - f2['sim_cnt']
-                        e_std = f1['std'] - f2['std']
-                        e_cp = f1['conf'] * f1['pred'] - f2['conf'] * f2['pred']
-                        
-                        features = []
-                        features.append(bpnn.norm(e_conf, self.max_e_conf, self.min_e_conf));
-                        features.append(bpnn.norm(e_sim_cnt, self.max_e_sim_cnt, self.min_e_sim_cnt));
-                        features.append(bpnn.norm(e_pred, self.max_e_pred, self.min_e_pred));
-                        features.append(bpnn.norm(e_std, self.max_e_std, self.min_e_std));
+                        ws = [f1['weight'], f2['weight']]
                         # features.append(bpnn.norm(e_cp, self.max_e_cp, self.min_e_cp));
-                        
-                        '''label = svm_clf.predict(features)[0]
-                        if label == 0.0:
-                            pred = min(preds)
-                        elif label == 1.0:
-                            pred = max(preds)'''
-                        probs = svm_clf.predict_proba(features)
-                        pred = py.average([min(preds), max(preds)], weights=[probs[0], probs[1]])
+                        pred = py.average(preds, weights=ws)
                     else:
                         pred = preds[0]
                         
