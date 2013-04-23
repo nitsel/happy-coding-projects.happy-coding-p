@@ -352,7 +352,7 @@ def prepare_data(expending=True):
                 for y in range(x + 1, m):
                     fy = features[y]
                     appending_features.append(fx + fy)
-                    # appending_features.append(abs(fx - fy))
+                    appending_features.append(abs(fx - fy))
                     # appending_features.append(fx - fy)
             
             features.extend(appending_features)
@@ -366,7 +366,7 @@ def prepare_data(expending=True):
                 for y in range(x + 1, m):
                     fy = features[y]
                     appending_features.append(fx + fy)
-                    # appending_features.append(abs(fx - fy))
+                    appending_features.append(abs(fx - fy))
                     # appending_features.append(fx - fy)
             
             features.extend(appending_features)
@@ -633,27 +633,23 @@ def test_svm():
 def test_adaboost():
     train_data, train_targets, test_data, test_targets = prepare_data(expending=True) 
     
-    for j in range(1, 11):
-        sigma = 0.1 * j
-        # weak = svm2.svm_raw(kernel=svm2.rbf_kernel(sigma=sigma), C=-1)
-        weak = svm2.svm_raw(kernel=svm2.rbf_kernel(sigma=sigma), C= -1)
-        # weak = tree.stump_learner()
-        learner = adaboost.boost_learner(weak, 20)
-        learner = multi.one_against_one(learner)
-        model = learner.train(train_data, train_targets, normalisedlabels=True)
+    weak = svm2.svm_binary()
+    learner = adaboost.boost_learner(weak, 100)
+    #learner = multi.one_against_one(learner)
+    model = learner.train(train_data, train_targets, normalisedlabels=True)
+    
+    correct = 0
+    for i in range(len(test_data)):
+        pred = model.apply(test_data[i])
+        target = test_targets[i]
         
-        correct = 0
-        for i in range(len(test_data)):
-            pred = model.apply(test_data[i])
-            target = test_targets[i]
-            
-            if pred == target:
-                correct += 1
-        
-        print 'Sigma =', sigma, ', accuracy =', float(correct) / len(test_data)
+        if pred == target:
+            correct += 1
+    
+    print 'Accuracy =', float(correct) / len(test_data)
         
 if __name__ == '__main__':
     # test_demo2()
     # test_svm()
-    # test_adaboost()
-    test_nn()
+    test_adaboost()
+    # test_nn()

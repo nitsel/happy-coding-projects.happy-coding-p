@@ -1679,13 +1679,11 @@ class MultiViewKmedoidsCF(KmedoidsCF):
     def cross_over(self, train, test):
         
         clusters, sim_clusters, trust_clusters = self.Multiview_Kmedoids(train, self.n_clusters)
-        
         self.results += ',' + self.cluster_by + ',' + str(self.n_clusters) + ',' + str(self.max_depth) + ',' + str(self.alpha)
         
-        count = 0
         errors = []
         for test_user in test:
-            if test_user not in train: continue     
+            if test_user not in train: continue
             
             # it is possible that one user occurs in two clusters
             cluster_ids = [] 
@@ -1770,14 +1768,14 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                     
                     if len(preds) < 0:
                         pred = py.mean(preds)
+                    
                     elif len(preds) > 1:
-                        count += 1
                         f1 = features[0]
                         f2 = features[1]
                         
                         ws = [f1['weight'], f2['weight']]
-                        # features.append(bpnn.norm(e_cp, self.max_e_cp, self.min_e_cp));
                         pred = py.average(preds, weights=ws)
+                    
                     else:
                         pred = preds[0]
                         
