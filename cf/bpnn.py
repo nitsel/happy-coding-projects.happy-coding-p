@@ -12,8 +12,8 @@ import numpy as py
 from sklearn import svm
 import milk.supervised.adaboost as adaboost
 import milk.supervised.svm as svm2
-import milk.supervised.tree as tree
-import milk.supervised.multi as multi
+from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model.logistic import LogisticRegression
 
 random.seed(0)
 
@@ -238,7 +238,7 @@ def prepare_data(expending=True):
             avg_w1 = float(touples[12][1:])
             avg_w2 = float(touples[13][:-1])
             e_ws = avg_w1 - avg_w2
-            features.append(e_ws)  # => 0.51, 0.559
+            # features.append(e_ws)  # => 0.51, 0.559
             
             # conf
             conf1 = float(touples[10][1:])
@@ -250,9 +250,9 @@ def prepare_data(expending=True):
             cnt1 = float(touples[2][1:])
             cnt2 = float(touples[3][:-1])
             e_cnt = cnt1 - cnt2
-            # if cnt1 != 1.0 and cnt2 != 1.0:
+            #if cnt1 == 1.0 or cnt2 == 1.0:
             #    continue
-            # features.append(e_cnt)  # => 0.537, 0.555, (0.548)
+            features.append(e_cnt)  # => 0.537, 0.555, (0.548)
             
             # sim_cnt
             sim_cnt1 = float(touples[6][1:])
@@ -539,7 +539,7 @@ def prepare_nn_data(expending=True):
                 for y in range(x + 1, m):
                     fy = features[y]
                     appending_features.append(fx + fy)
-                    # appending_features.append(abs(fx - fy))
+                    appending_features.append(abs(fx - fy))
                     # appending_features.append(fx - fy)
             
             features.extend(appending_features)
@@ -554,7 +554,7 @@ def prepare_nn_data(expending=True):
                 for y in range(x + 1, m):
                     fy = features[y]
                     appending_features.append(fx + fy)
-                    # appending_features.append(abs(fx - fy))
+                    appending_features.append(abs(fx - fy))
                     # appending_features.append(fx - fy)
             
             features.extend(appending_features)
@@ -631,11 +631,11 @@ def test_svm():
     print '\nBest accuracy =', max_accuracy, ', best gamma =', max_accuracy_gamma
     
 def test_adaboost():
-    train_data, train_targets, test_data, test_targets = prepare_data(expending=True) 
+    train_data, train_targets, test_data, test_targets = prepare_data(expending=False) 
     
     weak = svm2.svm_binary()
     learner = adaboost.boost_learner(weak, 100)
-    #learner = multi.one_against_one(learner)
+    # learner = multi.one_against_one(learner)
     model = learner.train(train_data, train_targets, normalisedlabels=True)
     
     correct = 0
@@ -647,9 +647,44 @@ def test_adaboost():
             correct += 1
     
     print 'Accuracy =', float(correct) / len(test_data)
+
+def gen_threshold(train_targets):
+    pos = 0
+    neg = 0
+    for label in train_targets:
+        if label == 1:
+            pos += 1
+        elif label == 0:
+            neg += 1
+    
+    return float(pos) / (pos + neg)
+
+def test_logistic_regression():
+    train_data, train_targets, test_data, test_targets = prepare_data(expending=False) 
+    
+    logit = LogisticRegression()
+    logit.fit(train_data, train_targets)
+    res = logit.predict_proba(test_data)
+    
+    theta = gen_threshold(train_targets)
+    
+    correct = 0
+    for i in range(len(test_targets)):
+        label = test_targets[i]
+        prob = res[i][0]
+        if prob > theta:
+            pred = 0.0
+        else:
+            pred = 1.0
+        
+        if label == pred:
+            correct += 1
+    
+    print 'Accuracy =', float(correct)/len(test_targets)
         
 if __name__ == '__main__':
     # test_demo2()
     # test_svm()
-    test_adaboost()
+    test_logistic_regression()
+    # test_adaboost()
     # test_nn()

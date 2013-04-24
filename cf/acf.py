@@ -16,6 +16,7 @@ from scipy import stats, integrate
 from sklearn import svm
 import copy
 import bpnn
+from sklearn.linear_model.logistic import LogisticRegression
 
 cross_validation = 'cross_validation'
 leave_one_out = 'leave_one_out'
@@ -1438,7 +1439,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
     
     def __init__(self):
         KmedoidsCF.__init__(self)
-        self.method_id = 'Multiview Kmedoids CF'
+        self.method_id = 'MV-CF'
         
     def Multiview_Kmedoids(self, train, K):
         '''Multiview K-medoids clustering methods, refers to paper --- Multi-View Clustering
@@ -1674,10 +1675,19 @@ class MultiViewKmedoidsCF(KmedoidsCF):
             
         print 'Done!'
         
+        self.sim_medoids = sim_medoids
+        self.trust_medoids = trust_medoids
+        
         return {k: list(set(sim_clusters[k]) | set(trust_clusters[k])) for k in range(K)}, sim_clusters, trust_clusters
     
     def cross_over(self, train, test):
-        
+        flag = True
+        if flag:
+            self.cross_over_w_logit(train, test)
+        else:
+            self.cross_over_wo_logit(train, test)
+            
+    def cross_over_wo_logit(self, train, test):
         clusters, sim_clusters, trust_clusters = self.Multiview_Kmedoids(train, self.n_clusters)
         self.results += ',' + self.cluster_by + ',' + str(self.n_clusters) + ',' + str(self.max_depth) + ',' + str(self.alpha)
         
@@ -1691,11 +1701,27 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                 if test_user in c_ms:
                     cluster_ids.append(c_id)
             
-            sim_cluster_id = -1
-            for c_id, c_ms in sim_clusters.viewitems():
-                if test_user in c_ms:
-                    sim_cluster_id = c_id
-                    break
+            if len(cluster_ids) == 2:
+                for c_id in cluster_ids:
+                    if test_user in sim_clusters[c_id]:
+                        sim_medoid = self.sim_medoids[c_id]
+                        sim_id = c_id
+                    
+                    if test_user in trust_clusters[c_id]:
+                        trust_medoid = self.trust_medoids[c_id]
+                        trust_id = c_id 
+                
+                sim1 = self.rating_dist[test_user][sim_medoid] if test_user in self.rating_dist and sim_medoid in self.rating_dist[test_user] else 1.0
+                sim2 = self.rating_dist[test_user][trust_medoid] if test_user in self.rating_dist and trust_medoid in self.rating_dist[test_user] else 1.0
+                sim3 = self.rating_dist[sim_medoid][trust_medoid] if sim_medoid in self.rating_dist and trust_medoid in self.rating_dist[sim_medoid] else 1.0
+                # similarity importance
+                si = 1 - math.sqrt((sim1 ** 2 + sim2 ** 2 + sim3 ** 2) / 3.0)
+                
+                t1 = self.trust_dist[test_user][sim_medoid] if test_user in self.trust_dist and sim_medoid in self.trust_dist[test_user] else 1.0
+                t2 = self.trust_dist[test_user][trust_medoid] if test_user in self.trust_dist and trust_medoid in self.trust_dist[test_user] else 1.0
+                t3 = self.trust_dist[sim_medoid][trust_medoid] if sim_medoid in self.trust_dist and trust_medoid in self.trust_dist[sim_medoid] else 1.0
+                # trust importance
+                ti = 1 - math.sqrt((t1 ** 2 + t2 ** 2 + t3 ** 2) / 3.0)
                 
             if not cluster_ids:
                 # print 'cannot find the cluster for test user', test_user
@@ -1763,6 +1789,13 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                             params['weight'] = params['conf'] / (1 + params['std'])
                             
                             features.append(params)
+                            
+                            if cluster_id == sim_id:
+                                sim_pred = pred
+                                f1 = params
+                            elif cluster_id == trust_id:
+                                trust_pred = pred
+                                f2 = params
                 if preds:
                     truth = test[test_user][test_item]
                     
@@ -1770,12 +1803,261 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                         pred = py.mean(preds)
                     
                     elif len(preds) > 1:
+                        '''
                         f1 = features[0]
                         f2 = features[1]
                         
                         ws = [f1['weight'], f2['weight']]
-                        pred = py.average(preds, weights=ws)
+                        pred = py.average(preds, weights=ws) '''
+                        x = 0.2
+                        w1 = x * si + (1 - x) * f1['conf']
+                        w2 = x * ti + (1 - x) * f2['conf']
+                        pred = py.average([sim_pred, trust_pred], weights=[w1, w2])
                     
+                    else:
+                        pred = preds[0]
+                        
+                    error = abs(pred - truth)
+                    errors.append(error)
+                    
+        self.errors = errors
+    
+    def collect_features(self, f1, f2):
+        
+        features = []
+        features.append(f1['avg_weight'] - f2['avg_weight'])
+        features.append(f1['conf'] - f2['conf'])
+        features.append(f1['pred'] - f2['pred'])
+        # features.append(f1['std'] - f2['std'])
+        # features.append(f1['total_cnt'] - f2['total_cnt'])
+        
+        return features
+       
+    def cross_over_w_logit(self, train, test):
+        clusters, sim_clusters, trust_clusters = self.Multiview_Kmedoids(train, self.n_clusters)
+        self.results += ',' + self.cluster_by + ',' + str(self.n_clusters) + ',' + str(self.max_depth) + ',' + str(self.alpha)
+        
+        errors = []
+        for test_user in test:
+            if test_user not in train: continue
+            
+            # it is possible that one user occurs in two clusters
+            cluster_ids = [] 
+            for c_id, c_ms in clusters.viewitems():
+                if test_user in c_ms:
+                    cluster_ids.append(c_id)
+            
+            if not cluster_ids:
+                # print 'cannot find the cluster for test user', test_user
+                continue
+            
+            ''' build a logistic regression model for this testing user based on training data '''
+            # step 1: collect training data 
+            train_data = []
+            train_targets = []
+            for test_item in train[test_user]: 
+                preds = []
+                features = []
+                
+                if len(cluster_ids) < 2: continue
+                
+                for cluster_id in cluster_ids:
+                    candidates = [m for m in clusters[cluster_id] if m != test_user and test_item in train[m]]
+                    rates = []
+                    ws = []
+                    
+                    sim_cnt = 0
+                    trust_cnt = 0
+                    total_cnt = 0
+                    for m in candidates:
+                        sim = 1 - self.rating_dist[test_user][m] if test_user in self.rating_dist and m in self.rating_dist[test_user] else py.nan
+                        t = 1 - self.trust_dist[test_user][m] if test_user in self.trust_dist and m in self.trust_dist[test_user] else 0
+                        
+                        if not py.isnan(sim) and 1 + sim > 0:
+
+                            if t > 0:
+                                w = stats.hmean([1 + sim, 1 + t])
+                            else:
+                                w = 1 + sim
+                            # w = stats.hmean([1 + sim, 1 + t])
+                                
+                            if w > 0:
+                                ws.append(w)
+                                rates.append(train[m][test_item])
+                                
+                                if m in sim_clusters[cluster_id]:
+                                    sim_cnt += 1
+                                
+                                if m in trust_clusters[cluster_id]:
+                                    trust_cnt += 1
+                                
+                                total_cnt += 1
+                            
+                    if rates:
+                        pred = py.average(rates, weights=ws)
+                        preds.append(pred)
+                        
+                        '''compute feature for confidence of prediction'''
+                        
+                        params = {}
+                        # average similarity:
+                        params['avg_weight'] = py.mean(ws)
+                        params['conf'] = calc_confidence(rates)
+                        params['pred'] = pred
+                        params['sim_cnt'] = sim_cnt
+                        params['std'] = py.std(rates)
+                        params['total_cnt'] = total_cnt
+                        params['trust_cnt'] = trust_cnt
+                        params['weight'] = params['conf'] / (1 + params['std'])
+                        
+                        features.append(params)
+                if len(preds) == 2:
+                    truth = train[test_user][test_item]
+                    
+                    e1 = abs(preds[0] - truth)
+                    e2 = abs(preds[1] - truth)
+                    
+                    label = 0 if e1 < e2 else 1
+                    train_targets.append(label)
+                    
+                    data = self.collect_features(features[0], features[1])
+                    train_data.append(data)
+            
+            if train_data:
+                # step two: normalize training data
+                max_norms = []
+                min_norms = []
+                
+                for i in range(len(data)):
+                    max_norms.append(-py.inf)
+                    min_norms.append(py.Inf)
+                    
+                for vec_features in train_data:
+                    for i in range(len(vec_features)):
+                        val = vec_features[i]
+                        if max_norms[i] < val: max_norms[i] = val
+                        if min_norms[i] > val: min_norms[i] = val
+                
+                for vec_features in train_data: 
+                    for i in range(len(vec_features)):
+                        val = vec_features[i]
+                        max_val = max_norms[i]
+                        min_val = min_norms[i]
+                        if max_val > min_val:
+                            norm_val = (val - min_val) / (max_val - min_val)
+                            vec_features[i] = norm_val   
+                
+                # step 3: build logistic model
+                pos = sum([1 for i in train_targets if i == 1.0])            
+                neg = sum([1 for i in train_targets if i == 0.0])            
+                theta = float(pos) / (pos + neg)
+                
+                if theta == 0 or theta == 1:
+                    single_label = train_targets[0]
+                else:
+                    if len(train_data) < len(data):
+                        dual = True
+                    else:
+                        dual = False
+                    logit = LogisticRegression(dual=dual)
+                    logit.fit(train_data, train_targets)
+                    
+            ''' perform logit regression on testing items '''
+            for test_item in test[test_user]:
+                preds = []
+                features = []
+                
+                for cluster_id in cluster_ids:
+                    candidates = [m for m in clusters[cluster_id] if m != test_user and test_item in train[m]]
+                    rates = []
+                    ws = []
+                    
+                    sim_cnt = 0
+                    trust_cnt = 0
+                    total_cnt = 0
+                    for m in candidates:
+                        sim = 1 - self.rating_dist[test_user][m] if test_user in self.rating_dist and m in self.rating_dist[test_user] else py.nan
+                        t = 1 - self.trust_dist[test_user][m] if test_user in self.trust_dist and m in self.trust_dist[test_user] else 0
+                        
+                        if not py.isnan(sim) and 1 + sim > 0:
+
+                            if t > 0:
+                                w = stats.hmean([1 + sim, 1 + t])
+                            else:
+                                w = 1 + sim
+                            # w = stats.hmean([1 + sim, 1 + t])
+                                
+                            if w > 0:
+                                ws.append(w)
+                                rates.append(train[m][test_item])
+                                
+                                if m in sim_clusters[cluster_id]:
+                                    sim_cnt += 1
+                                
+                                if m in trust_clusters[cluster_id]:
+                                    trust_cnt += 1
+                                
+                                total_cnt += 1
+                            
+                    if rates:
+                        pred = py.average(rates, weights=ws)
+                        preds.append(pred)
+                        
+                        if len(cluster_ids) > 1:
+                            '''compute feature for confidence of prediction'''
+                            
+                            params = {}
+                            # average similarity:
+                            params['avg_weight'] = py.mean(ws)
+                            params['conf'] = calc_confidence(rates)
+                            params['pred'] = pred
+                            params['sim_cnt'] = sim_cnt
+                            params['std'] = py.std(rates)
+                            params['total_cnt'] = total_cnt
+                            params['trust_cnt'] = trust_cnt
+                            params['weight'] = params['conf'] / (1 + params['std'])
+                            
+                            features.append(params)
+                if preds:
+                    truth = test[test_user][test_item]
+                    
+                    if len(preds) < 0:
+                        pred = py.mean(preds)
+                    
+                    elif len(preds) > 1:
+                        data = self.collect_features(features[0], features[1])
+                        
+                        for i in range(len(data)):
+                            val = data[i]
+                            max_val = max_norms[i]
+                            min_val = min_norms[i]
+                            if max_val > min_val:
+                                norm_val = (val - min_val) / (max_val - min_val)
+                                data[i] = norm_val 
+                        
+                        if theta == 0 or theta == 1:
+                            '''
+                            f1 = features[0]
+                            f2 = features[1]
+                            
+                            if False and (f1['total_cnt'] == 1 or f2['total_cnt'] == 1):
+                                if f1['total_cnt'] < f2['total_cnt']:
+                                    pred = preds[0]
+                                elif f1['total_cnt'] > f2['total_cnt']:
+                                    pred = preds[1]
+                                else:
+                                    pred = max(preds)
+                                    
+                            else:
+                                pred = preds[single_label]'''
+                            pred = py.mean(preds)
+                            
+                        else:
+                            probs = logit.predict_proba(data)[0]
+                            # pred = py.average(preds, weights=probs)
+                            label = 0 if probs[0] > theta else 1
+                            pred=preds[label]
+
                     else:
                         pred = preds[0]
                         
