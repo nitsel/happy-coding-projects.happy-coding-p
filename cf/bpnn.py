@@ -238,7 +238,7 @@ def prepare_data(expending=True):
             avg_w1 = float(touples[12][1:])
             avg_w2 = float(touples[13][:-1])
             e_ws = avg_w1 - avg_w2
-            # features.append(e_ws)  # => 0.51, 0.559
+            features.append(e_ws)  # => 0.51, 0.559
             
             # conf
             conf1 = float(touples[10][1:])
@@ -250,7 +250,7 @@ def prepare_data(expending=True):
             cnt1 = float(touples[2][1:])
             cnt2 = float(touples[3][:-1])
             e_cnt = cnt1 - cnt2
-            #if cnt1 == 1.0 or cnt2 == 1.0:
+            # if cnt1 == 1.0 or cnt2 == 1.0:
             #    continue
             features.append(e_cnt)  # => 0.537, 0.555, (0.548)
             
@@ -258,17 +258,23 @@ def prepare_data(expending=True):
             sim_cnt1 = float(touples[6][1:])
             sim_cnt2 = float(touples[7][:-1])
             e_sim_cnt = sim_cnt1 - sim_cnt2
-            # features.append(e_sim_cnt)  # =>0.5258, 0.549, (0.545)
+            features.append(e_sim_cnt)  # =>0.5258, 0.549, (0.545)
             
             # trust_cnt
             trust_cnt1 = float(touples[8][1:])
             trust_cnt2 = float(touples[9][:-1])
             e_trust_cnt = trust_cnt1 - trust_cnt2
-            # features.append(e_trust_cnt)  # =>0.533, 0.544, (0.553), (0.545)
+            features.append(e_trust_cnt)  # =>0.533, 0.544, (0.553), (0.545)
             
-            r1 = max([sim_cnt1, sim_cnt2])
-            r2 = max([trust_cnt1, trust_cnt2])
-            # features.append(r1 / (r1 + r2)) #=>0.524, 0.541, (0.518), (0.533)
+            sim_ratio1 = sim_cnt1 / cnt1
+            sim_ratio2 = sim_cnt2 / cnt2
+            e_sim_ratio = sim_ratio1 - sim_ratio2
+            features.append(e_sim_ratio) 
+            
+            trust_ratio1 = trust_cnt1 / cnt1
+            trust_ratio2 = trust_cnt2 / cnt2
+            e_trust_ratio = trust_ratio1 - trust_ratio2
+            features.append(e_trust_ratio) 
             
             # preds
             pred1 = float(touples[4][1:])
@@ -426,7 +432,7 @@ def prepare_nn_data(expending=True):
             avg_w1 = float(touples[12][1:])
             avg_w2 = float(touples[13][:-1])
             e_ws = avg_w1 - avg_w2
-            features.append(e_ws)  # => 0.51, 0.559
+            #features.append(e_ws)  # => 0.51, 0.559
             
             # conf
             conf1 = float(touples[10][1:])
@@ -603,11 +609,11 @@ def test_nn():
      
 def test_svm():
     
-    train_data, train_targets, test_data, test_targets = prepare_data()
+    train_data, train_targets, test_data, test_targets = prepare_data(expending=True)
     
     max_accuracy = 0
     max_accuracy_gamma = 0
-    for i in range(11):
+    for i in range(10,21):
         g = i * 0.1
         clf = svm.NuSVC(kernel='rbf', gamma=g, probability=True)
         clf.fit(train_data, train_targets)
@@ -680,11 +686,11 @@ def test_logistic_regression():
         if label == pred:
             correct += 1
     
-    print 'Accuracy =', float(correct)/len(test_targets)
+    print 'Accuracy =', float(correct) / len(test_targets)
         
 if __name__ == '__main__':
     # test_demo2()
-    # test_svm()
-    test_logistic_regression()
+    test_svm()
+    # test_logistic_regression()
     # test_adaboost()
     # test_nn()

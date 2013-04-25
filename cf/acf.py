@@ -1809,9 +1809,20 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                         
                         ws = [f1['weight'], f2['weight']]
                         pred = py.average(preds, weights=ws) '''
-                        x = 0.2
+                        '''x = 0.2
                         w1 = x * si + (1 - x) * f1['conf']
-                        w2 = x * ti + (1 - x) * f2['conf']
+                        w2 = x * ti + (1 - x) * f2['conf']'''
+                        total = f1['total_cnt'] + f2['total_cnt']
+                        cw1 = float(f1['total_cnt']) / total
+                        cw2 = float(f2['total_cnt']) / total
+                        
+                        aw = f1['avg_weight'] + f2['avg_weight']
+                        aw1 = f1['avg_weight'] / aw
+                        aw2 = f2['avg_weight'] / aw
+                        
+                        w1 = cw1 * aw1 * f1['conf']
+                        w2 = cw2 * aw2 * f2['conf']
+                        
                         pred = py.average([sim_pred, trust_pred], weights=[w1, w2])
                     
                     else:
@@ -1825,11 +1836,13 @@ class MultiViewKmedoidsCF(KmedoidsCF):
     def collect_features(self, f1, f2):
         
         features = []
-        features.append(f1['avg_weight'] - f2['avg_weight'])
+        #features.append(f1['avg_weight'] - f2['avg_weight'])
         features.append(f1['conf'] - f2['conf'])
         features.append(f1['pred'] - f2['pred'])
-        # features.append(f1['std'] - f2['std'])
-        # features.append(f1['total_cnt'] - f2['total_cnt'])
+        features.append(f1['std'] - f2['std'])
+        features.append(f1['total_cnt'] - f2['total_cnt'])
+        features.append(f1['sim_ratio'] - f2['sim_ratio'])
+        features.append(f1['trust_ratio'] - f2['trust_ratio'])
         
         return features
        
@@ -1892,7 +1905,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                     trust_cnt += 1
                                 
                                 total_cnt += 1
-                            
+
                     if rates:
                         pred = py.average(rates, weights=ws)
                         preds.append(pred)
@@ -1908,6 +1921,8 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                         params['std'] = py.std(rates)
                         params['total_cnt'] = total_cnt
                         params['trust_cnt'] = trust_cnt
+                        params['sim_ratio'] = sim_cnt / float(total_cnt)
+                        params['trust_ratio'] = trust_cnt / float(total_cnt)
                         params['weight'] = params['conf'] / (1 + params['std'])
                         
                         features.append(params)
@@ -1919,7 +1934,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                     
                     label = 0 if e1 < e2 else 1
                     train_targets.append(label)
-                    
+                              
                     data = self.collect_features(features[0], features[1])
                     train_data.append(data)
             
@@ -2015,6 +2030,8 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                             params['std'] = py.std(rates)
                             params['total_cnt'] = total_cnt
                             params['trust_cnt'] = trust_cnt
+                            params['sim_ratio'] = sim_cnt / float(total_cnt)
+                            params['trust_ratio'] = trust_cnt / float(total_cnt)
                             params['weight'] = params['conf'] / (1 + params['std'])
                             
                             features.append(params)
@@ -2025,7 +2042,17 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                         pred = py.mean(preds)
                     
                     elif len(preds) > 1:
+                        '''e1 = abs(preds[0] - truth)
+                        e2 = abs(preds[1] - truth)
+                        if e1 < e2: 
+                            label = 0
+                        else:
+                            label = 1
+                            
+                        logs.info('' + str(preds[0]) + ', ' + str(preds[1]) + ', ' + str(truth) + ', ' + str(label))'''
                         data = self.collect_features(features[0], features[1])
+                        
+                        #if not train_data: continue
                         
                         for i in range(len(data)):
                             val = data[i]
@@ -2054,9 +2081,9 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                             
                         else:
                             probs = logit.predict_proba(data)[0]
-                            # pred = py.average(preds, weights=probs)
-                            label = 0 if probs[0] > theta else 1
-                            pred=preds[label]
+                            pred = py.average(preds, weights=probs)
+                            # label = 0 if probs[0] > theta else 1
+                            # pred=preds[label]
 
                     else:
                         pred = preds[0]
