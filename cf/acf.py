@@ -2004,7 +2004,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                             test_data.append(data)
                             test_targets.append(label)
                             num_test += 1
-                        
+                        # TODO: add sim_ratio and trust_ratio as features to train_data
                         train_data.append(data)
                         train_targets.append(label)
                         
