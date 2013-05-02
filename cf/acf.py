@@ -220,7 +220,7 @@ class AbstractCF(object):
     def multiple_run(self):
         if self.config['cross.validation.batch'] == on:
             if self.config['kmeans.clusters'] == 'batch':
-                n_clusters = [10 * (i + 1) for i in range(10)]
+                n_clusters = [50 * (i + 1) for i in range(10)]
             else:
                 n_clusters = [int(self.config['kmeans.clusters'])]
             
@@ -2240,12 +2240,14 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         '''Training: collect training data for svm classifier'''
         train_data = []
         train_targets = []
-        
+        verbose = not True
         progress = 0
         for test_user in train:
             
             progress += 1
-            print 'current progress:', progress, '/', len(train)
+            if verbose: 
+                print 'current progress:', progress, '/', len(train)
+                
             cluster_ids = [] 
             for c_id, c_ms in clusters.viewitems():
                 if test_user in c_ms:
