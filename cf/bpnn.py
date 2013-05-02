@@ -416,19 +416,22 @@ def get_feature_pair(touples, index):
     pair2 = float(touples[index + 1][:-1])
     return pair1, pair2
     
-def prepare_pairwise_data(expending=False):
+def prepare_pairwise_data(num_class=2):
     train_data = [] 
     train_targets = []
     
     test_data = []
     test_targets = []
+    test_truth = []
+    
+    errors = []
     with open('flixster_features3.txt') as f:
         line_num = 0
         for line in f:
             line = line.strip()
             if not line: continue
             if line[0] == '#':
-                print 'commenting line'
+                # print 'commenting line'
                 continue
             
             features = []
@@ -438,22 +441,31 @@ def prepare_pairwise_data(expending=False):
             for i in range(16):
                 features.extend(get_feature_pair(touples, i * 2))
             
-            # total_cnt
-            cnt0, cnt1 = get_feature_pair(touples, 20)
-            sim_cnt0, sim_cnt1 = get_feature_pair(touples, 14)
-            trust_cnt0, trust_cnt1 = get_feature_pair(touples, 4)
+            '''Expending basic features'''
+            for i in range(16):
+                pair0, pair1 = get_feature_pair(touples, i * 2)
+                features.append(pair0 - pair1)
             
-            features.append(sim_cnt0 / cnt0)
-            features.append(sim_cnt1 / cnt1)
+            # preds
+            pred0, pred1 = get_feature_pair(touples, 8)
+            truth = get_feature_pair(touples, 32)[0]
             
-            features.append(trust_cnt0 / cnt0)
-            features.append(trust_cnt1 / cnt1)
-            
-            label = get_feature_pair(touples, 32)[1]
+            min_e = py.inf
+            step = 1.0 / (num_class - 1.0)
+            for i in range(num_class):
+                x = i * step
+                pred = (1 - x) * pred0 + x * pred1
+                e = abs(pred - truth)
+                
+                if min_e > e:
+                    min_e = e
+                    label = float(i)
             
             if line_num < 1000:
                 test_data.append(features)
                 test_targets.append(label)
+                errors.append(min_e)
+                test_truth.append(truth)
             else:
                 train_data.append(features)
                 train_targets.append(label)
@@ -465,24 +477,21 @@ def prepare_pairwise_data(expending=False):
                     for i in range(16):
                         pair0, pair1 = get_feature_pair(touples, i * 2)
                         features.extend([pair1, pair0])
-                    
-                    # total_cnt
-                    cnt0, cnt1 = get_feature_pair(touples, 20)
-                    sim_cnt0, sim_cnt1 = get_feature_pair(touples, 14)
-                    trust_cnt0, trust_cnt1 = get_feature_pair(touples, 4)
-                    
-                    features.append(sim_cnt1 / cnt1)
-                    features.append(sim_cnt0 / cnt0)
-                    
-                    features.append(trust_cnt1 / cnt1)
-                    features.append(trust_cnt0 / cnt0)
+                        
+                    for i in range(16):
+                        pair0, pair1 = get_feature_pair(touples, i * 2)
+                        features.append(pair1 - pair0)
                     
                     train_data.append(features)
-                    train_targets.append(1 - label)
+                    train_targets.append(num_class - 1.0 - label)
                 
             line_num += 1
             if line_num >= 5966:
                 break
+    
+    '''print out the best potential accuracy'''
+    best_mae = py.mean(errors)
+    print 'potentially best testing MAE =', best_mae, '[number of classes = ' + str(num_class) + ']'
     
     # normalization
     # step 1: find the maximum and minimum for each attribute
@@ -518,73 +527,9 @@ def prepare_pairwise_data(expending=False):
                 norm_val = (val - min_val) / (max_val - min_val)
                 vec_features[i] = norm_val
     
-    print 'number of features before expending:', len(features)
+    print 'number of features in use:', len(features)
     
-    if expending:
-        # expending basic features
-        ''' Expending basic features '''
-        for features in train_data: 
-            appending_features = []
-            m = len(features)
-            for x in range(m - 1):
-                fx = features[x]
-                for y in range(x + 1, m):
-                    fy = features[y]
-                    appending_features.append(fx + fy)
-                    # appending_features.append(abs(fx - fy))
-                    # appending_features.append(fx - fy)
-            
-            features.extend(appending_features)
-            
-            
-        for features in test_data: 
-            appending_features = []
-            m = len(features)
-            for x in range(m - 1):
-                fx = features[x]
-                for y in range(x + 1, m):
-                    fy = features[y]
-                    appending_features.append(fx + fy)
-                    # appending_features.append(abs(fx - fy))
-                    # appending_features.append(fx - fy)
-            
-            features.extend(appending_features)
-        
-        print 'number of features after expending:', len(features)
-        # re-normalization: 
-        max_norms = []
-        min_norms = []
-        
-        for i in range(len(features)):
-            max_norms.append(-py.inf)
-            min_norms.append(py.Inf)
-            
-        for vec_features in train_data:
-            for i in range(len(vec_features)):
-                val = vec_features[i]
-                if max_norms[i] < val: max_norms[i] = val
-                if min_norms[i] > val: min_norms[i] = val
-        
-        # normalize the features values to [0, 1]
-        for vec_features in train_data: 
-            for i in range(len(vec_features)):
-                val = vec_features[i]
-                max_val = max_norms[i]
-                min_val = min_norms[i]
-                if max_val > min_val:
-                    norm_val = (val - min_val) / (max_val - min_val)
-                    vec_features[i] = norm_val    
-                
-        for vec_features in test_data: 
-            for i in range(len(vec_features)):
-                val = vec_features[i]
-                max_val = max_norms[i]
-                min_val = min_norms[i]
-                if max_val > min_val:
-                    norm_val = (val - min_val) / (max_val - min_val)
-                    vec_features[i] = norm_val
-            
-    return  train_data, train_targets, test_data, test_targets
+    return  train_data, train_targets, test_data, test_targets, max_norms, min_norms, test_truth
         
 def prepare_nn_data(expending=True):
     train_data = [] 
@@ -782,36 +727,59 @@ def test_nn():
     n.train(train_data, iterations=100, N=0.1, M=0.02)
     n.test(test_data)
      
-def test_svm():
+def test_svm(num_class=11):
     
-    train_data, train_targets, test_data, test_targets = prepare_pairwise_data()
+    step = 1.0 / (num_class - 1.0)
+    train_data, train_targets, test_data, test_targets, max_norms, min_norms, test_truth = prepare_pairwise_data(num_class=num_class)
     
     max_accuracy = 0
-    max_accuracy_gamma = 0
+    single_label = True
     for i in range(0, 31):
         g = i * 0.1
-        clf = svm.SVC(kernel='rbf', gamma=g, probability=True, class_weight='auto')
+        clf = svm.SVC(kernel='rbf', gamma=g, probability=not single_label, class_weight='auto')
         # clf = svm.NuSVC(kernel='rbf', gamma=g, probability=True)
         clf.fit(train_data, train_targets)
         pred_targets = clf.predict(test_data)
-        pred_ps = clf.predict_proba(test_data)
+        
+        if not single_label:
+            pred_ps = clf.predict_proba(test_data)
         
         k = 0
+        errors = []
         for i in range(len(pred_targets)):
-            pred = pred_targets[i]
-            truth = test_targets[i]
+            pred_label = pred_targets[i]
+            truth_label = test_targets[i]
             
-            if pred == truth:
+            pred0, pred1 = test_data[i][8:10]
+            max0, max1 = max_norms[8:10]
+            min0, min1 = min_norms[8:10]
+            pred0 = pred0 * (max0 - min0) + min0
+            pred1 = pred1 * (max1 - min1) + min1
+            truth = test_truth[i]
+            
+            if single_label:
+                x = pred_label * step
+                pred = (1 - x) * pred0 + x * pred1
+                e = abs(pred - truth)
+            else:
+                preds = [(1 - label * step) * pred0 + label * step * pred1 for label in range(num_class)]
+                e = abs(truth - py.average(preds, weights=pred_ps[i]))
+            
+            errors.append(e)
+            
+            if pred_label == truth_label:
                 k += 1
         accuracy = float(k) / len(test_targets)
+        mae = py.mean(errors)
         
-        print 'gamma =', g, ', accuracy =', accuracy
+        print 'gamma =', g, ', label accuracy =', accuracy, ', MAE =', mae 
         if max_accuracy < accuracy:
             max_accuracy = accuracy
             max_accuracy_gamma = g
+            best_mae = mae
     
-    print '\nBest accuracy =', max_accuracy, ', best gamma =', max_accuracy_gamma
-    
+    print '\nBest accuracy =', max_accuracy, ', best gamma =', max_accuracy_gamma, ', best MAE =', best_mae
+       
 def test_adaboost():
     train_data, train_targets, test_data, test_targets = prepare_data(expending=False) 
     
