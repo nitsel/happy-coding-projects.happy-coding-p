@@ -13,14 +13,13 @@ from data import Dataset
 from graph import Graph, Vertex, Edge
 import random, emailer
 from scipy import stats, integrate
-from sklearn import svm
+from sklearn import svm, cross_validation
 import copy
 from sklearn import metrics
-from sklearn import cross_validation
 from sklearn.linear_model.logistic import LogisticRegression
 
-cross_validation = 'cross_validation'
-leave_one_out = 'leave_one_out'
+str_cv = 'cross_validation'
+str_leave_one_out = 'leave_one_out'
 resnick_formula = 'resnick_formula'
 
 on = 'on'
@@ -136,7 +135,7 @@ class AbstractCF(object):
         self.dataset_mode = self.config['dataset.mode']
         
         self.dataset_directory = self.config['dataset.directory'].replace('$run.dataset$', self.dataset)
-        if self.validate_method == cross_validation:
+        if self.validate_method == str_cv:
             self.dataset_directory += '5fold/'
             self.rating_set = self.config['train.set']
             self.test_set = self.config['test.set']
@@ -262,7 +261,7 @@ class AbstractCF(object):
             self.trust = ds.load_trust(trust_file)
         
         # prepare test set
-        test_data = ds.load_ratings(self.dataset_directory + self.test_set)  if self.validate_method == cross_validation else None
+        test_data = ds.load_ratings(self.dataset_directory + self.test_set)  if self.validate_method == str_cv else None
         self.test = test_data[0]  if test_data is not None else None
         self.test_items = test_data[1]  if test_data is not None else None
         self.test = self.prep_test(self.train, self.test)
@@ -276,14 +275,14 @@ class AbstractCF(object):
         self.collect_results();
     
     def perform(self, train, test):
-        if self.validate_method == cross_validation:
+        if self.validate_method == str_cv:
             top_n = int(self.config['top.n'])
             if top_n > 0:
                 self.cross_over_top_n(train, test)
             else:
                 self.cross_over(train, test)
                 
-        elif self.validate_method == leave_one_out:
+        elif self.validate_method == str_leave_one_out:
             self.leave_one_out(train, test)
             
         else:
@@ -295,7 +294,7 @@ class AbstractCF(object):
     def cross_over_top_n(self, train, test):
         pass
     
-    def leave_one_out(self, train, test):
+    def str_leave_one_out(self, train, test):
         pass
     
     def collect_results(self):
@@ -604,7 +603,7 @@ class ClassicCF(AbstractCF):
         self.user_preds = user_preds 
         self.errors = []
     
-    def leave_one_out(self, train, test):
+    def str_leave_one_out(self, train, test):
         errors = []
         count = 0
         for test_user in test.viewkeys():
@@ -1879,8 +1878,6 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         '''Training: collect training data for svm classifier'''
         train_data = []
         train_targets = []
-        test_data = []
-        test_targets = []
         
         num_test = 0
         for test_user in train:
@@ -2008,10 +2005,6 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                         for key, val in f1.viewitems():
                             data.append(val - f2[key])
                         
-                        if num_test < 1000:
-                            test_data.append(data)
-                            test_targets.append(label)
-                            num_test += 1
                         train_data.append(data)
                         train_targets.append(label)
                         
@@ -2053,42 +2046,27 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                     norm_val = (val - min_val) / (max_val - min_val)
                     vec_features[i] = norm_val    
                 
-        for vec_features in test_data: 
-            for i in range(len(vec_features)):
-                val = vec_features[i]
-                max_val = max_norms[i]
-                min_val = min_norms[i]
-                if max_val > min_val:
-                    norm_val = (val - min_val) / (max_val - min_val)
-                    vec_features[i] = norm_val
-        
         print 'number of features in use:', len(data)
         
-        max_accuracy = 0
-        for i in range(25, 51):
-            g = i * 0.1
+        train_targets = py.array(train_targets)
+        min_mse = py.inf
+        for i in range(0, 11):
+            g = i * 2.0
             
-            clf = svm.SVC(kernel='rbf', gamma=g, probability=False, class_weight='auto')
-            # clf = svm.NuSVC(kernel='rbf', gamma=g, probability=True)
-            clf.fit(train_data, train_targets)
-            pred_targets = clf.predict(test_data)
+            clf = svm.SVC(kernel='rbf', gamma=g, class_weight='auto')
             
-            k = 0
-            for i in range(len(pred_targets)):
-                pred = pred_targets[i]
-                truth = test_targets[i]
-                
-                if pred == truth:
-                    k += 1
-            accuracy = float(k) / len(test_targets)
+            scores = cross_validation.cross_val_score(clf, train_data, train_targets, score_func=metrics.mean_squared_error, cv=5)
+            mse = py.mean(scores)
             
-            print 'gamma =', g, ', accuracy =', accuracy
-            if max_accuracy < accuracy:
-                max_accuracy = accuracy
-                max_accuracy_gamma = g
+            print 'gamma =', g, ', mse =', mse
+            if min_mse > mse:
+                min_mse = mse
+                best_gamma = g
                 best_clf = clf
         
-        print '\nBest accuracy =', max_accuracy, ', best gamma =', max_accuracy_gamma
+        print '\nBest accuracy =', min_mse, ', best gamma =', best_gamma
+        
+        best_clf.fit(train_data, train_targets)
                         
         '''Testing: to predict items' ratings. '''
         errors = []
@@ -2263,7 +2241,11 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         train_data = []
         train_targets = []
         
+        progress = 0
         for test_user in train:
+            
+            progress += 1
+            print 'current progress:', progress, '/', len(train)
             cluster_ids = [] 
             for c_id, c_ms in clusters.viewitems():
                 if test_user in c_ms:
@@ -2426,34 +2408,44 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                 
         print 'number of features in use:', len(data)
         
-        
-        '''run 5-fold cross validation to determine the best paramters'''
-        max_accuracy = -py.inf
-        for i in range(0, 3):
-            g = i * 0.1
+        '''determine the best gamma'''
+        train_targets = py.array(train_targets)
+        min_mse = py.inf
+        for i in range(0, 7):
+            g = i * 0.5
             
             clf = svm.SVR(kernel='rbf', gamma=g)
             
-            scores = cross_validation.cross_val_score(clf, train_data, train_targets, cv=5, score_func=metrics.mean_squared_error)
-            accuracy = scores.mean()
+            scores = cross_validation.cross_val_score(clf, train_data, train_targets, score_func=metrics.mean_squared_error, cv=5)
             
-            print 'gamma =', g, ', accuracy =', accuracy
+            mse = py.mean(scores)
             
-            if max_accuracy < accuracy:
-                max_accuracy = accuracy
+            '''clf.fit(train_data, train_targets)
+            
+            pred_vals = clf.predict(train_data)
+            
+            errors = []
+            for k in range(len(pred_vals)):
+                pred_val = pred_vals[k]
+                real_val = train_targets[k]
+                e = abs(pred_val - real_val)
+                errors.append(e)
+                
+            accuracy = py.mean(errors)'''
+            
+            print 'gamma =', g, ', mse =', mse
+            
+            if min_mse > mse:
+                min_mse = mse
                 best_gamma = g
                 best_clf = clf
         
-        print '\nBest accuracy =', max_accuracy, ', best gamma =', best_gamma
-        
+        print '\nBest mse =', min_mse, ', best gamma =', best_gamma
         self.results += ',' + str(best_gamma)
-        
         best_clf.fit(train_data, train_targets)
-                        
+        
         '''Testing: to predict items' ratings. '''
         errors = []
-        num_correct = 0
-        num_all = 0
         for test_user in test:
             if test_user not in train: continue
             
@@ -2595,7 +2587,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                 norm_val = (val - min_val) / (max_val - min_val)
                                 data[i] = norm_val
                         
-                        pred = best_clf.predict(data)[0]
+                        pred = best_clf.predict(data)[0] * 5.0
                     else:
                         pred = preds[0]
                         
@@ -2603,7 +2595,6 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                     errors.append(error)
                     
         self.errors = errors
-        logs.info('Accuracy = ' + str(num_correct / float(num_all)))
     
     def collect_features(self, f1, f2):
         
@@ -4489,5 +4480,6 @@ def test_mf():
     print nR
     
 if __name__ == '__main__':
+    # iris = datasets.load_iris()
     main()
     # test_mf()
