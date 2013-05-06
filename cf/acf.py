@@ -3,19 +3,16 @@ Created on Feb 15, 2013
 
 @author: guoguibing
 '''
-import math, os, pickle, sys, shutil, socket, datetime
+import math, os, pickle, sys, shutil, socket, datetime, copy
 import numpy as py
 import logging as logs
-import operator
+import operator, random, emailer
 from scipy.spatial import distance
 from data import Dataset
 # from sklearn.cluster import DBSCAN
 from graph import Graph, Vertex, Edge
-import random, emailer
-from scipy import stats, integrate
-from sklearn import svm, cross_validation
-import copy
-from sklearn import metrics
+from scipy import integrate, stats
+from sklearn import svm, cross_validation, metrics
 from sklearn.linear_model.logistic import LogisticRegression
 
 str_cv = 'cross_validation'
@@ -213,7 +210,9 @@ class AbstractCF(object):
         
         # notify me when it is finished
         if self.config['results.email.notification'] == on:
-            subject = 'Program is finished @ {0:s}'.format(socket.gethostname())
+            cwd = os.getcwd()
+            ind = cwd.rfind('\\') if sys.platform.startswith('win') else cwd.rfind('/')            
+            subject = 'Program is finished @ {0:s}: {1:s}'.format(socket.gethostname(), cwd[ind + 1:])
             emailer.send_email(file=self.debug_file, Subject=subject)
             print 'An email with results has been sent to you.' 
         
