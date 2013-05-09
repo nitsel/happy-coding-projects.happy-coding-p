@@ -2865,7 +2865,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         while True:
             clusters, sim_clusters, trust_clusters, fl_sim_medoids, \
             fl_trust_medoids, fl_rating_dist, fl_trust_dist\
-            = self.Multiview_Kmedoids_crossing(flixster_train, self.n_clusters, flixster_dir)
+            = self.Multiview_Kmedoids_crossing(flixster_train, self.n_clusters*5, flixster_dir)
             
             self.results += ',' + str(self.n_clusters) + ',' + str(self.max_depth)
         
