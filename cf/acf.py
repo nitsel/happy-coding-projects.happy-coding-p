@@ -174,7 +174,7 @@ class AbstractCF(object):
                 return {user:item_ratings for user, item_ratings in train.items() if len(train[user]) < cold_len}
             elif self.dataset_mode == 'heavy_users':
                 return {user:item_ratings for user, item_ratings in train.items() if len(train[user]) > heavy_len}
-            elif self.dataset_mode=='clustering':
+            elif self.dataset_mode == 'clustering':
                 self.train = {user: train[user] for user in train if len(train[user]) >= self.cold_len or (user in self.trust and len(self.trust[user]) >= 5)} 
                 return {user: test[user] for user in test if user in self.train}
             else:
@@ -186,7 +186,7 @@ class AbstractCF(object):
                 return {user:item_ratings for user, item_ratings in test.items() if user not in train or len(train[user]) < cold_len}
             elif self.dataset_mode == 'heavy_users':
                 return {user:item_ratings for user, item_ratings in test.items() if user not in train or len(train[user]) > heavy_len}
-            elif self.dataset_mode=='clustering':
+            elif self.dataset_mode == 'clustering':
                 self.train = {user: train[user] for user in train if len(train[user]) >= self.cold_len or (user in self.trust and len(self.trust[user]) >= 5)} 
                 return {user: test[user] for user in test if user in self.train}
             else:
@@ -509,12 +509,17 @@ class ClassicCF(AbstractCF):
                     else:
                         weight = user_sims[user]
                         mu_b = mu_dist[user]
-                    
-                    if py.isnan(weight) or weight <= self.similarity_threashold: continue
+                    if self.dataset_mode == 'clustering':
+                        if py.isnan(weight) or 1 + weight <= 0:continue
+                    else:
+                        if py.isnan(weight) or weight <= self.similarity_threashold: continue
                     
                     # print user, test_item
                     votes.append(train[user][test_item] - mu_b)
-                    weights.append(weight)
+                    if self.dataset_mode == 'clustering':
+                        weights.append(1 + weight)
+                    else:
+                        weights.append(weight)
                 
                 if not votes:continue
                 
@@ -1446,7 +1451,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
     def __init__(self):
         KmedoidsCF.__init__(self)
         self.method_id = 'MV-CF'
-        self.gamma_range=[0.0, 0.1, 0.2, 0.3, 0.5, 0.7, 1.0]
+        self.gamma_range = [0.0, 0.1, 0.2, 0.3, 0.5, 0.7, 1.0]
         
     def Multiview_Kmedoids(self, train, K):
         '''Multiview K-medoids clustering methods, refers to paper --- Multi-View Clustering
