@@ -174,6 +174,9 @@ class AbstractCF(object):
                 return {user:item_ratings for user, item_ratings in train.items() if len(train[user]) < cold_len}
             elif self.dataset_mode == 'heavy_users':
                 return {user:item_ratings for user, item_ratings in train.items() if len(train[user]) > heavy_len}
+            elif self.dataset_mode=='clustering':
+                self.train = {user: train[user] for user in train if len(train[user]) >= self.cold_len or (user in self.trust and len(self.trust[user]) >= 5)} 
+                return {user: test[user] for user in test if user in self.train}
             else:
                 raise ValueError('invalid test data set mode')
         else:
@@ -219,7 +222,8 @@ class AbstractCF(object):
     def multiple_run(self):
         if self.config['cross.validation.batch'] == on:
             if self.config['kmeans.clusters'] == 'batch':
-                n_clusters = [50 * (i + 1) for i in range(10)]
+                num_base = 10 if self.dataset == 'FilmTrust' else 50
+                n_clusters = [num_base * (i + 1) for i in range(10)]
             else:
                 n_clusters = [int(self.config['kmeans.clusters'])]
             
@@ -1439,6 +1443,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
     def __init__(self):
         KmedoidsCF.__init__(self)
         self.method_id = 'MV-CF'
+        self.gamma_range=[0.0, 0.1, 0.2, 0.3, 0.5, 0.7, 1.0]
         
     def Multiview_Kmedoids(self, train, K):
         '''Multiview K-medoids clustering methods, refers to paper --- Multi-View Clustering
@@ -2412,9 +2417,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         '''determine the best gamma'''
         train_targets = py.array(train_targets)
         min_mse = py.inf
-        for i in range(0, 7):
-            g = i * 0.5
-            
+        for g in self.gamma_range:
             clf = svm.SVR(kernel='rbf', gamma=g)
             
             scores = cross_validation.cross_val_score(clf, train_data, train_targets, score_func=metrics.mean_squared_error, cv=5)
