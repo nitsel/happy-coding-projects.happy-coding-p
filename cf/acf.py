@@ -3211,7 +3211,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                 norm_val = (val - min_val) / (max_val - min_val)
                                 data[i] = norm_val
                         
-                        pred = best_clf.predict(data)[0] * 5.0
+                        pred = best_clf.predict(data)[0] * 4.0
                     else:
                         pred = preds[0]
                         
