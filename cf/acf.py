@@ -1091,13 +1091,14 @@ class KmedoidsCF(AbstractCF):
         if given_dir is None:
             dir_path = self.dataset_directory + 'd' + str(self.max_depth) + '/'
         else:
-            dir_path = given_dir                
+            dir_path = given_dir + 'd' + str(self.max_depth) + '/'        
         prefix = self.test_set[0:self.test_set.find('.')]
         
         rating_dist_file = dir_path + 'rating_dist_' + prefix + '.txt'
         trust_dist_file = dir_path + 'trust_dist_' + prefix + '.txt'
         
-        trust_scale = 4.13 if given_dir is not None else 1.0  # FilmTrust: 6.70, Flixster: 4.13
+        #trust_scale = 4.13 if given_dir is not None else 1.0  # FilmTrust: 6.70, Flixster: 4.13
+        trust_scale=1.0
         
         if os.path.exists(rating_dist_file) and os.path.exists(trust_dist_file):
             print 'reading rating distance data from', rating_dist_file
@@ -1181,7 +1182,7 @@ class KmedoidsCF(AbstractCF):
                 jaccard = float(cnt) / cnt_all
                 
                 # part 3: overall social distance
-                tsim = self.alpha * trust /trust_scale + (1 - self.alpha) * jaccard
+                tsim = self.alpha * trust / trust_scale + (1 - self.alpha) * jaccard
                 '''
                 Note:
                     if cannot connect in the trust network, and no commonly overlapping, 
@@ -1939,7 +1940,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
             self.cross_over_simple(train, test)
         elif not True:
             self.cross_over_w_svm(train, test)
-        elif not True:
+        elif True:
             self.cross_over_w_svr(train, test)
         else:
             self.cross_over_w_svr_crossing(train, test)
@@ -2858,14 +2859,14 @@ class MultiViewKmedoidsCF(KmedoidsCF):
     def cross_over_w_svr_crossing(self, train, test):
         # load training data from flixster data set
         ds = Dataset()
-        flixster_dir = 'D:\\Java\\Workspace\\CF-RS\\Datasets\\Flixster\\Sample\\5fold\\'
-        flixster_rating_file = flixster_dir + self.dataset
-        flixster_train, fl_items= ds.load_ratings(flixster_rating_file)
+        flixster_dir = 'D:\\Java\\Workspace\\CF-RS\\Datasets\\Flixster\\Sample_5000_users\\5fold\\'
+        flixster_rating_file = flixster_dir + self.rating_set
+        flixster_train, fl_items = ds.load_ratings(flixster_rating_file)
         
         while True:
             clusters, sim_clusters, trust_clusters, fl_sim_medoids, \
             fl_trust_medoids, fl_rating_dist, fl_trust_dist\
-            = self.Multiview_Kmedoids_crossing(flixster_train, self.n_clusters*5, flixster_dir)
+ = self.Multiview_Kmedoids_crossing(flixster_train, self.n_clusters * 5, flixster_dir)
             
             self.results += ',' + str(self.n_clusters) + ',' + str(self.max_depth)
         
@@ -3070,6 +3071,8 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         clusters, sim_clusters, trust_clusters = self.Multiview_Kmedoids(train, self.n_clusters)
         
         errors = []
+        test_data=[]
+        test_targets=[]
         for test_user in test:
             if test_user not in train: continue
             
@@ -3203,20 +3206,44 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                         for key, val in f1.viewitems():
                             data.append(val - f2[key])
                         
-                        for i in range(len(data)):
-                            val = data[i]
-                            max_val = max_norms[i]
-                            min_val = min_norms[i]
-                            if max_val > min_val:
-                                norm_val = (val - min_val) / (max_val - min_val)
-                                data[i] = norm_val
+                        test_data.append(data)
+                        test_targets.append(truth)
                         
-                        pred = best_clf.predict(data)[0] * 4.0
+                        #pred = best_clf.predict(data)[0] * 5.0
                     else:
                         pred = preds[0]
                         
                     error = abs(pred - truth)
                     errors.append(error)
+        
+        # normalize test_data
+        max_norms = []
+        min_norms = []
+        
+        for i in range(len(data)):
+            max_norms.append(-py.inf)
+            min_norms.append(py.Inf)
+            
+        for vec_features in test_data:
+            for i in range(len(vec_features)):
+                val = vec_features[i]
+                if max_norms[i] < val: max_norms[i] = val
+                if min_norms[i] > val: min_norms[i] = val
+        
+        # step 2: normalize the features values to [0, 1]
+        for vec_features in test_data: 
+            for i in range(len(vec_features)):
+                val = vec_features[i]
+                max_val = max_norms[i]
+                min_val = min_norms[i]
+                if max_val > min_val:
+                    norm_val = (val - min_val) / (max_val - min_val)
+                    vec_features[i] = norm_val    
+        
+        # predictions
+        pred_vals = best_clf.predict(test_data)
+        es=[abs(pred_vals[i]*5.0-test_targets[i]) for i in range(len(pred_vals))]
+        errors.extend(es)
                     
         self.errors = errors
     
