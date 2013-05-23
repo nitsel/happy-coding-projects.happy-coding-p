@@ -3032,7 +3032,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         train_targets = py.array(train_targets)
         
         # TODO: add regressors here
-        rg_type='random_forest'
+        rg_type='bayesian_ridge'
         if rg_type=='gradient_boosting':
             # max_depth can be tuned to adopt the best performance. For this work, we aim to find the importance of features
             # therefore, we aim the best performance, but focus on the feature importances
