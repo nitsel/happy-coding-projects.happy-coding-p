@@ -2677,11 +2677,8 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         '''determine the best gamma'''
         train_targets = py.array(train_targets)
         min_mse = py.inf
-        kernel_type = 'rbf' if not True else 'linear'
-        if kernel_type == 'linear':
-            self.gamma_range = [0.0]
         for g in self.gamma_range:
-            clf = svm.SVR(kernel=kernel_type, gamma=g)
+            clf = svm.SVR(kernel='rbf', gamma=g)
             
             scores = cross_validation.cross_val_score(clf, train_data, train_targets, score_func=metrics.mean_squared_error, cv=5)
             mse = py.mean(scores)
@@ -2696,11 +2693,6 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         print '\nBest mse =', min_mse, ', best gamma =', best_gamma
         self.results += ',' + str(best_gamma)
         best_clf.fit(train_data, train_targets)
-        if kernel_type == 'linear':
-            print 'using linear SVR method'
-            coefs = best_clf.coef_
-            logs.info(str(coefs))
-            print coefs
         
         '''Testing: to predict items' ratings. '''
         errors = []
@@ -3040,30 +3032,34 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         train_targets = py.array(train_targets)
         
         # TODO: add regressors here
-        rg_type='bayesian_ridge'
+        rg_type='random_forest'
         if rg_type=='gradient_boosting':
             # max_depth can be tuned to adopt the best performance. For this work, we aim to find the importance of features
             # therefore, we aim the best performance, but focus on the feature importances
             regressor = GradientBoostingRegressor(loss='ls', learning_rate=0.05, n_estimators=100, max_depth=3)
             regressor.fit(train_data, train_targets)
-            
             importances = regressor.feature_importances_
+        
+        elif rg_type=='random_forest':
+            regressor = RandomForestRegressor(n_estimators=100, compute_importances=True, oob_score=False)
+            regressor.fit(train_data, train_targets, None)
+            importances = regressor.feature_importances_
+                
         elif rg_type=='normal_linear':
             regressor=linear_model.LinearRegression()
             regressor.fit(train_data, train_targets)
             importances=regressor.coef_
-        
+            
+        elif rg_type=='svr_linear':
+            regressor = svm.SVR(kernel='linear')
+            regressor.fit(train_data, train_targets)
+            importances =regressor.coef_
+            
         elif rg_type=='bayesian_ridge':
             regressor=linear_model.BayesianRidge()
             regressor.fit(train_data, train_targets)
             importances=regressor.coef_
         
-        elif rg_type=='random_forest':
-            forest = RandomForestRegressor(n_estimators=100, compute_importances=True, oob_score=False)
-            forest.fit(train_data, train_targets, None)
-        
-            importances = forest.feature_importances_
-            
         logs.info(str(importances))
         print 'Regressor = ', rg_type
         print importances
@@ -3212,7 +3208,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                 data[i] = norm_val
                         # TODO: do predictions
                         if rg_type in ['normal_linear','bayesian_ridge']:
-                            pred=regressor.predict(data) * 5.0
+                            pred = regressor.predict(data) * 5.0
                         else:
                             pred = regressor.predict(data)[0] * 5.0
                     else:
