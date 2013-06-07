@@ -3422,6 +3422,9 @@ class MultiViewKmedoidsCF(KmedoidsCF):
             print 'sps:', sps
             print 'scores:', scores
             
+            logs.info(pvalues)
+            logs.info(scores)
+            
             regressor = svm.SVR(kernel='linear')
             regressor.fit(selector.transform(train_data), train_targets)
         
