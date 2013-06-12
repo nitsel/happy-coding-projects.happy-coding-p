@@ -2856,7 +2856,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         num_scale = 10 + 1
         min_scale = 0.5
         
-        reg_type = 'linear'
+        reg_type = 'non linear'
         expending_features = True if reg_type == 'linear' else False
         
         while True:
@@ -2962,11 +2962,17 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                 # item related features:
                                 params['item_rating_cnt'] = len(self.items[test_item]) - 1
                                 item_ratings = [self.items[test_item][user] for user in self.items[test_item] if user != test_user]
+                                params['max_item_rating'] = py.max(item_ratings)
+                                params['min_item_rating'] = py.min(item_ratings)
                                 params['avg_item_rating'] = py.mean(item_ratings)
                                 params['std_item'] = py.std(item_ratings)
                                 
                                 # prediction related features:
+                                params['max_weight'] = py.max(ws)
+                                params['min_weight'] = py.min(ws)
                                 params['avg_weight'] = py.mean(ws)
+                                params['std_weight'] = py.std(ws)
+                                
                                 params['conf'] = calc_confidence(rates)
                                 params['pred'] = pred
                                 params['sim_cnt'] = sim_cnt
@@ -2981,7 +2987,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                 for k in range(1, num_scale):
                                     scale = k * min_scale
                                     scale_cnt = rates.count(scale)
-                                    params[scale] = scale_cnt
+                                    # params[scale] = scale_cnt
                                     params['r' + str(scale)] = float(scale_cnt) / len(rates)
                                     
                                     if scale > median:
@@ -3074,24 +3080,31 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         train_targets = py.array(train_targets)
 
         if reg_type == 'non linear':
-            min_mse = py.inf
-            for g in self.gamma_range:
-                clf = svm.SVR(kernel='rbf', gamma=g)
+            if not True:
+                min_mse = py.inf
+                for g in self.gamma_range:
+                    clf = svm.SVR(kernel='rbf', gamma=g)
+                    
+                    scores = cross_validation.cross_val_score(clf, train_data, train_targets, score_func=metrics.mean_squared_error, cv=5)
+                    mse = py.mean(scores)
+                    
+                    print 'gamma =', g, ', mse =', mse
+                    
+                    if min_mse > mse:
+                        min_mse = mse
+                        best_gamma = g
+                        best_clf = clf
                 
-                scores = cross_validation.cross_val_score(clf, train_data, train_targets, score_func=metrics.mean_squared_error, cv=5)
-                mse = py.mean(scores)
-                
-                print 'gamma =', g, ', mse =', mse
-                
-                if min_mse > mse:
-                    min_mse = mse
-                    best_gamma = g
-                    best_clf = clf
+                print '\nBest mse =', min_mse, ', best gamma =', best_gamma
+                self.results += ',' + str(best_gamma)
+                best_clf.fit(train_data, train_targets)
+            else:
+                pca = decomposition.PCA(n_components='mle')
+                new_train = pca.fit_transform(train_data)
             
-            print '\nBest mse =', min_mse, ', best gamma =', best_gamma
-            self.results += ',' + str(best_gamma)
-            best_clf.fit(train_data, train_targets)
-            
+                print 'test on gamma =', 0.2
+                best_clf = svm.SVR(kernel='rbf', gamma=0.2)
+                best_clf.fit(new_train, train_targets)
         else:
             pca = decomposition.PCA(n_components='mle')
             new_train = pca.fit_transform(train_data)
@@ -3204,11 +3217,17 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                             
                             # item related features:
                             params['item_rating_cnt'] = len(self.items[test_item])
-                            params['avg_item_rating'] = py.mean(self.items[test_item].values())
-                            params['std_item'] = py.std(self.items[test_item].values())
+                            item_ratings = self.items[test_item].values()
+                            params['max_item_rating'] = py.max(item_ratings)
+                            params['min_item_rating'] = py.min(item_ratings)
+                            params['avg_item_rating'] = py.mean(item_ratings)
+                            params['std_item'] = py.std(item_ratings)
                             
                             # prediction related features:
+                            params['max_weight'] = py.max(ws)
+                            params['min_weight'] = py.min(ws)
                             params['avg_weight'] = py.mean(ws)
+                            params['std_weight'] = py.std(ws)
                             params['conf'] = calc_confidence(rates)
                             params['pred'] = pred
                             params['sim_cnt'] = sim_cnt
@@ -3222,7 +3241,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                             for k in range(1, num_scale):
                                 scale = k * min_scale
                                 scale_cnt = rates.count(scale)
-                                params[scale] = scale_cnt
+                                # params[scale] = scale_cnt
                                 params['r' + str(scale)] = float(scale_cnt) / len(rates)
                                 
                                 if scale > median:
@@ -3251,11 +3270,6 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                             data.append(val)
                             data.append(f2[key])
                         
-                        '''if expending_features:
-                            for key, val in f1.viewitems():
-                                data.append(val - f2[key])
-                                data.append(val + f2[key])'''
-                        
                         for i in range(len(data)):
                             val = data[i]
                             max_val = max_norms[i]
@@ -3264,23 +3278,25 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                 norm_val = (val - min_val) / (max_val - min_val)
                                 data[i] = norm_val
                         
-                        expend_data = []
-                        size=len(data)
-                        for i in range(size):
-                            fa = data[i]
-                            if i + 2 < size:
-                                for j in range(i + 1, size):
-                                    fb = data[j]
-                                    expend_data.append((fa - fb + 1) / 2.0)
-                                    expend_data.append((fa + fb) / 2.0)
-                        data.extend(expend_data)
+                        if expending_features:
+                            expend_data = []
+                            size = len(data)
+                            for i in range(size):
+                                fa = data[i]
+                                if i + 2 < size:
+                                    for j in range(i + 1, size):
+                                        fb = data[j]
+                                        expend_data.append((fa - fb + 1) / 2.0)
+                                        expend_data.append((fa + fb) / 2.0)
+                            data.extend(expend_data)
                         
                         if reg_type == 'linear':
                             new_data = pca.transform(data)
                             pred = best_clf.predict(new_data)[0] * 5.0
                             
                         else:
-                            pred = best_clf.predict(data)[0] * 5.0
+                            new_data = pca.transform(data)
+                            pred = best_clf.predict(new_data)[0] * 5.0
                         
                         '''e = abs(pred - truth)
                         
