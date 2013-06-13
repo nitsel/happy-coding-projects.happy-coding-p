@@ -17,6 +17,7 @@ from sklearn.ensemble.forest import RandomForestRegressor
 from sklearn.ensemble.gradient_boosting import GradientBoostingRegressor
 from sklearn.feature_selection.univariate_selection import SelectPercentile, \
     f_regression
+from collections import Counter
 
 str_cv = 'cross_validation'
 str_leave_one_out = 'leave_one_out'
@@ -2964,6 +2965,9 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                 item_ratings = [self.items[test_item][user] for user in self.items[test_item] if user != test_user]
                                 params['max_item_rating'] = py.max(item_ratings)
                                 params['min_item_rating'] = py.min(item_ratings)
+                                mode = Counter(item_ratings).most_common(1)[1]
+                                params['mode_item_rating'] = mode
+                                params['diff_mode_pred'] = mode - pred
                                 params['avg_item_rating'] = py.mean(item_ratings)
                                 params['std_item'] = py.std(item_ratings)
                                 
@@ -3221,6 +3225,9 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                             params['max_item_rating'] = py.max(item_ratings)
                             params['min_item_rating'] = py.min(item_ratings)
                             params['avg_item_rating'] = py.mean(item_ratings)
+                            mode = Counter(item_ratings).most_common(1)[1]
+                            params['mode_item_rating'] = mode
+                            params['diff_mode_pred'] = mode - pred
                             params['std_item'] = py.std(item_ratings)
                             
                             # prediction related features:
