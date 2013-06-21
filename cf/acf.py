@@ -2857,8 +2857,8 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         num_scale = 10 + 1
         min_scale = 0.5
         
-        reg_type = 'non linear'
-        expending_features = True if reg_type == 'linear' else False
+        reg_type = 'linear'
+        expending_features = not True if reg_type == 'linear' else False
         
         while True:
             clusters, sim_clusters, trust_clusters = self.Multiview_Kmedoids(train, self.n_clusters)
@@ -2965,9 +2965,9 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                 item_ratings = [self.items[test_item][user] for user in self.items[test_item] if user != test_user]
                                 params['max_item_rating'] = py.max(item_ratings)
                                 params['min_item_rating'] = py.min(item_ratings)
-                                mode = Counter(item_ratings).most_common(1)[1]
+                                mode = Counter(item_ratings).most_common(1)[0][0]
                                 params['mode_item_rating'] = mode
-                                params['diff_mode_pred'] = mode - pred
+                                params['diff_mode_pred'] = abs(mode - pred)
                                 params['avg_item_rating'] = py.mean(item_ratings)
                                 params['std_item'] = py.std(item_ratings)
                                 
@@ -3085,39 +3085,95 @@ class MultiViewKmedoidsCF(KmedoidsCF):
 
         if reg_type == 'non linear':
             if not True:
+                
+                # pca = decomposition.PCA(n_components='mle')
+                # new_train = pca.fit_transform(train_data)
+                self.gamma_range = [0.2, 0.4, 0.5]
                 min_mse = py.inf
                 for g in self.gamma_range:
-                    clf = svm.SVR(kernel='rbf', gamma=g)
-                    
-                    scores = cross_validation.cross_val_score(clf, train_data, train_targets, score_func=metrics.mean_squared_error, cv=5)
-                    mse = py.mean(scores)
-                    
-                    print 'gamma =', g, ', mse =', mse
-                    
-                    if min_mse > mse:
-                        min_mse = mse
-                        best_gamma = g
-                        best_clf = clf
+                    for c in range(1, 6):
+                        c = 0.5 * c;
+                        clf = svm.SVR(kernel='rbf', gamma=g, C=c)
+                        
+                        scores = cross_validation.cross_val_score(clf, train_data, train_targets, score_func=metrics.mean_squared_error, cv=5)
+                        mse = py.mean(scores)
+                        
+                        print 'gamma =', g, ', c =', c , ', mse =', mse
+                        
+                        if min_mse > mse:
+                            min_mse = mse
+                            best_gamma = g
+                            best_c = c
+                            best_clf = clf
                 
-                print '\nBest mse =', min_mse, ', best gamma =', best_gamma
-                self.results += ',' + str(best_gamma)
+                print '\nBest mse =', min_mse, ', best gamma =', best_gamma, ', best C =', best_c
+                self.results += ',' + str(best_gamma) + ', ' + str(best_c)
+                
                 best_clf.fit(train_data, train_targets)
             else:
+                # pca = decomposition.PCA(n_components='mle')
+                # new_train = pca.fit_transform(train_data)
+            
+                # print 'nuber of used componets =', len(pca.components_[0])
+                best_clf = svm.SVR(kernel='rbf', gamma=0.2, C=1.0)
+                best_clf.fit(train_data, train_targets)
+        else:
+            fs_type = 'univariate'
+        
+            if fs_type == 'univariate':
+                selector = SelectPercentile(f_regression, 10)
+                selector.fit(train_data, train_targets)
+                pvalues = selector.pvalues_
+                sps = -py.log10(pvalues)
+                scores = selector.scores_
+            
+                print 'pvalues:', pvalues
+                print 'sps:', sps
+                print 'scores:', scores
+                
+                logs.info(pvalues)
+                logs.info(scores)
+                
+                regressor = svm.SVR(kernel='linear')
+                regressor.fit(selector.transform(train_data), train_targets)
+            
+            elif fs_type == 'lasso':
+                '''L1 norm regularization'''
+            
+            else:     
+                # to determine a best alpha, we may use LassoCV instead
+                regressor = linear_model.Lasso(alpha=0.1)
+                regressor.fit(train_data, train_targets)
+                print regressor.coef_
                 pca = decomposition.PCA(n_components='mle')
                 new_train = pca.fit_transform(train_data)
-            
-                print 'test on gamma =', 0.2
-                best_clf = svm.SVR(kernel='rbf', gamma=0.2)
-                best_clf.fit(new_train, train_targets)
-        else:
-            pca = decomposition.PCA(n_components='mle')
-            new_train = pca.fit_transform(train_data)
-            
-            print 'components =', len(pca.components_[0])
-            print 'variances =', pca.explained_variance_
-            
-            best_clf = svm.SVR(kernel='linear')
-            best_clf.fit(new_train, train_targets)
+                
+                print 'components =', len(pca.components_[0])
+                print 'variances =', pca.explained_variance_
+                
+                if True:
+                    min_mse = py.inf
+                    for c in range(1, 6):
+                        c = 0.2 * c;
+                        clf = svm.SVR(kernel='linear', C=c)
+                        
+                        scores = cross_validation.cross_val_score(clf, new_train, train_targets, score_func=metrics.mean_squared_error, cv=5)
+                        mse = py.mean(scores)
+                        
+                        print 'c =', c , ', mse =', mse
+                        
+                        if min_mse > mse:
+                            min_mse = mse
+                            best_c = c
+                            best_clf = clf
+                    
+                    print '\nBest mse =', min_mse, ', best C =', best_c
+                    self.results += ', ' + str(best_c)
+                    
+                    best_clf.fit(new_train, train_targets)
+                else:
+                    best_clf = svm.SVR(kernel='linear', C=c)
+                    best_clf.fit(train_data, train_targets)
         
         '''Testing: to predict items' ratings. '''
         errors = []
@@ -3225,9 +3281,9 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                             params['max_item_rating'] = py.max(item_ratings)
                             params['min_item_rating'] = py.min(item_ratings)
                             params['avg_item_rating'] = py.mean(item_ratings)
-                            mode = Counter(item_ratings).most_common(1)[1]
+                            mode = Counter(item_ratings).most_common(1)[0][0]
                             params['mode_item_rating'] = mode
-                            params['diff_mode_pred'] = mode - pred
+                            params['diff_mode_pred'] = abs(mode - pred)
                             params['std_item'] = py.std(item_ratings)
                             
                             # prediction related features:
@@ -3297,20 +3353,29 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                         expend_data.append((fa + fb) / 2.0)
                             data.extend(expend_data)
                         
-                        if reg_type == 'linear':
-                            new_data = pca.transform(data)
-                            pred = best_clf.predict(new_data)[0] * 5.0
-                            
+                        if fs_type == 'lasso':
+                            pred = regressor.predict(data) * 5.0
+                        elif True:
+                            pred = regressor.predict(selector.transform(data))[0] * 5.0
                         else:
-                            new_data = pca.transform(data)
-                            pred = best_clf.predict(new_data)[0] * 5.0
                         
-                        '''e = abs(pred - truth)
+                            if reg_type == 'linear':
+                                new_data = pca.transform(data)
+                                pred = best_clf.predict(new_data)[0] * 5.0
+                                
+                            else:
+                                # new_data = pca.transform(data)
+                                pred = best_clf.predict(data)[0] * 5.0
                         
-                        if e >= 1.0:
-                            print 'error =', e
-                        else:
-                            print 'error =', e'''
+                        # TODO: deal with the values out of range
+                        if pred > 5.0:
+                            pred = 5.0;
+                        elif pred < 0 or pred <= 0.25:
+                            print 'prediction', pred, 'is skipped.'
+                            continue
+                        elif pred > 0.25 and pred < 0.5:
+                            pred = 0.5
+                        
                         
                         # check if there are any potential to do so. 
                         # pred = truth

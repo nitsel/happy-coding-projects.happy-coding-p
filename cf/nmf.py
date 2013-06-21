@@ -27,7 +27,8 @@ def nmf(V, Winit, Hinit, tol, timelimit, maxiter):
     
     for itera in xrange(1, maxiter):
         # stopping condition
-        projnorm = norm(r_[gradW[logical_or(gradW < 0, W > 0)], gradH[logical_or(gradH < 0, H > 0)]])
+        projnorm = norm(r_[gradW[logical_or(gradW < 0, W > 0)], 
+                           gradH[logical_or(gradH < 0, H > 0)]])
         if projnorm < tol * initgrad or time() - initt > timelimit: break
       
         (W, gradW, iterW) = nlssubprob(V.T, H.T, W.T, tolW, 1000)
