@@ -1700,6 +1700,36 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         self.sim_medoids = sim_medoids
         self.trust_medoids = trust_medoids
         
+        flag_merge_clusters = True;
+        if flag_merge_clusters:
+            # deal with trust clusters first
+            new_trust_clusters = copy.deepcopy(trust_clusters)
+            for k, new_trust_cluster in new_trust_clusters.iteritems():
+                num = len(new_trust_cluster)
+                if num < 5:
+                    # merged with other clusters; 
+                    min_dist = py.inf
+                    best_id = -1
+                    for m, trust_medoid in trust_medoids:
+                        if k == m: continue
+                        
+                        sum_dist = 0
+                        num_cnt=0
+                        for member in new_trust_cluster:
+                            dist = trust_dist[trust_medoid][member] if trust_medoid in trust_dist and member in trust_dist[trust_medoid] else py.nan
+                            if not py.isnan(dist):
+                                sum_dist += dist
+                                num_cnt+=1
+                        
+                        avg_dist = float(sum_dist)/num_cnt
+                        if min_dist < avg_dist:
+                            min_dist = avg_dist
+                            best_id = m
+                            
+                    if best_id>-1:
+                        trust_clusters[best_id].extend(new_trust_cluster)
+                        trust_clusters[k]=[]
+                        
         return {k: list(set(sim_clusters[k]) | set(trust_clusters[k])) for k in range(K)}, sim_clusters, trust_clusters
 
     def Multiview_Kmedoids_crossing(self, train, K, given_dir):
@@ -4528,19 +4558,6 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                     
         self.errors = errors
     
-    def collect_features(self, f1, f2):
-        
-        features = []
-        # features.append(f1['avg_weight'] - f2['avg_weight'])
-        features.append([f1['conf'], f2['conf']])
-        features.append([f1['pred'], f2['pred']])
-        features.append([f1['std'], f2['std']])
-        features.append([f1['total_cnt'], f2['total_cnt']])
-        features.append([f1['sim_ratio'], f2['sim_ratio']])
-        features.append(f1['trust_ratio'] - f2['trust_ratio'])
-        
-        return features
-       
     def cross_over_w_logit(self, train, test):
         clusters, sim_clusters, trust_clusters = self.Multiview_Kmedoids(train, self.n_clusters)
         self.results += ',' + self.cluster_by + ',' + str(self.n_clusters) + ',' + str(self.max_depth) + ',' + str(self.alpha)
