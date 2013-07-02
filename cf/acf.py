@@ -1480,7 +1480,21 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         # random.seed(500)
         
         '''Initialization: initial k medoids for view 2, i.e. trust, what if we start with view 1: sim?'''
-        medoid_indices = random.sample(range(len(users)), K)
+        if not True:
+            medoid_indices = random.sample(range(len(users)), K)
+        else:
+            medoid_indices = []
+            numt = len(self.trust)
+            for i in range(K):
+                if i > numt:
+                    break
+                while True:
+                    index = random.randint(0, len(users) - 1)
+                    user = users[index]
+                    if index in medoid_indices:continue
+                    if user in self.trust:
+                        medoid_indices.append(index)
+                        break;
         
         '''E-step for view 2: associate each data point o to the closest medoid'''
         start_with_trust = True
@@ -1700,36 +1714,107 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         self.sim_medoids = sim_medoids
         self.trust_medoids = trust_medoids
         
+        '''step 1: merge and prune trust clusters'''
+        num_threshold = 5
         flag_merge_clusters = True;
         if flag_merge_clusters:
-            # deal with trust clusters first
+            
+            '''merging: deal with trust clusters first'''
             new_trust_clusters = copy.deepcopy(trust_clusters)
             for k, new_trust_cluster in new_trust_clusters.iteritems():
                 num = len(new_trust_cluster)
-                if num < 5:
+                if num < num_threshold:
                     # merged with other clusters; 
                     min_dist = py.inf
                     best_id = -1
-                    for m, trust_medoid in trust_medoids:
+                    for m, trust_medoid in trust_medoids.iteritems():
                         if k == m: continue
+                        if trust_medoid is None:
+                            continue
                         
                         sum_dist = 0
-                        num_cnt=0
+                        num_cnt = 0
                         for member in new_trust_cluster:
                             dist = trust_dist[trust_medoid][member] if trust_medoid in trust_dist and member in trust_dist[trust_medoid] else py.nan
                             if not py.isnan(dist):
                                 sum_dist += dist
-                                num_cnt+=1
+                                num_cnt += 1
                         
-                        avg_dist = float(sum_dist)/num_cnt
-                        if min_dist < avg_dist:
+                        if num_cnt < 1: continue
+                        avg_dist = float(sum_dist) / num_cnt
+                        if min_dist > avg_dist:
                             min_dist = avg_dist
                             best_id = m
                             
-                    if best_id>-1:
+                    if best_id > -1:
                         trust_clusters[best_id].extend(new_trust_cluster)
-                        trust_clusters[k]=[]
+                        trust_clusters[k] = []
+                        trust_medoids[k] = None
+                        print 'trust cluster', k, 'is absorbed by cluster', best_id
+            
+            '''pruning: further remove clusters with too small members''' 
+            new_trust_clusters = copy.deepcopy(trust_clusters)
+            cnt_t = 0;
+            for k, new_trust_cluster in new_trust_clusters.iteritems():
+                if len(new_trust_cluster) < num_threshold:    
+                    trust_clusters[k] = []
+                    trust_medoids[k] = None
+                    # print 'cluster', k, 'is removed'
+                else:
+                    cnt_t += 1
+                    # print 'trust cluster', k, 'is reserved'
+        
+            print cnt_t, 'trust clusters has been reserved'
+            
+        '''step 2: merge and prune similarity clusters'''
+        if flag_merge_clusters:
+            
+            '''merging: deal with similarity clusters'''
+            new_sim_clusters = copy.deepcopy(sim_clusters)
+            for k, new_sim_cluster in new_sim_clusters.iteritems():
+                if len(new_sim_cluster) < num_threshold:
+                    # merged with other clusters; 
+                    min_dist = py.inf
+                    best_id = -1
+                    for m, sim_medoid in sim_medoids.iteritems():
+                        if k == m: continue
+                        if sim_medoid is None:
+                            continue
                         
+                        sum_dist = 0
+                        num_cnt = 0
+                        for member in new_sim_cluster:
+                            dist = rating_dist[sim_medoid][member] if sim_medoid in rating_dist and member in rating_dist[sim_medoid] else py.nan
+                            if not py.isnan(dist):
+                                sum_dist += abs(dist)
+                                num_cnt += 1
+                        
+                        if num_cnt < 1: continue
+                        avg_dist = float(sum_dist) / num_cnt
+                        if min_dist > avg_dist:
+                            min_dist = avg_dist
+                            best_id = m
+                            
+                    if best_id > -1:
+                        sim_clusters[best_id].extend(new_sim_cluster)
+                        sim_clusters[k] = []
+                        sim_medoids[k] = None
+                        print 'sim cluster', k, 'is absorbed by cluster', best_id
+            
+            '''pruning: further remove sim clusters with too small members''' 
+            new_sim_clusters = copy.deepcopy(sim_clusters)
+            cnt_s = 0
+            for k, new_sim_cluster in new_sim_clusters.iteritems():
+                if len(new_sim_cluster) < num_threshold:    
+                    sim_clusters[k] = []
+                    sim_medoids[k] = None
+                    # print 'cluster', k, 'is removed'
+                else:
+                    cnt_s += 1
+                    # print 'sim cluster', k, 'is reserved'           
+            print cnt_s, 'sim clusters has been reserved'
+                   
+        '''step 3: combine trust clusters'''
         return {k: list(set(sim_clusters[k]) | set(trust_clusters[k])) for k in range(K)}, sim_clusters, trust_clusters
 
     def Multiview_Kmedoids_crossing(self, train, K, given_dir):
@@ -2884,11 +2969,9 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         self.errors = errors
         
     def cross_over_w_svr_more_features(self, train, test):
-        num_scale = 10 + 1
-        min_scale = 0.5
-        
-        reg_type = 'linear'
-        expending_features = not True if reg_type == 'linear' else False
+        num_scale = int(self.config['ratings.num_scale']) + 1
+        min_scale = float(self.config['ratings.min_scale'])
+        max_scale = float(self.config['ratings.max_scale'])
         
         while True:
             clusters, sim_clusters, trust_clusters = self.Multiview_Kmedoids(train, self.n_clusters)
@@ -2963,13 +3046,12 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                             
                             if len(cluster_ids) == 2:
                                 
-                                params = {}
-                                
                                 # user related features:
-                                params['user_rating_cnt'] = len(train[test_user]) - 1
+                                user_params={}
+                                user_params['user_rating_cnt'] = len(train[test_user]) - 1
                                 user_ratings = [train[test_user][item] for item in train[test_user] if item != test_item]
-                                params['avg_user_rating'] = py.mean(user_ratings)
-                                params['std_user'] = py.std(user_ratings)
+                                user_params['avg_user_rating'] = py.mean(user_ratings)
+                                user_params['std_user'] = py.std(user_ratings)
                                 
                                 if cluster_id == sim_id:
                                     dist_core = self.rating_dist[test_user][sim_medoid] if sim_medoid in self.rating_dist[test_user] else 1.0
@@ -2986,35 +3068,36 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                     
                                     dist_mds = self.rating_dist[trust_medoid][side_medoid] if trust_medoid in self.rating_dist and side_medoid in self.rating_dist[trust_medoid] else 1.0
                                 
-                                params['dist_core'] = dist_core
-                                params['dist_side'] = dist_side
-                                params['dist_mds'] = dist_mds
+                                user_params['dist_core'] = dist_core
+                                user_params['dist_side'] = dist_side
+                                user_params['dist_mds'] = dist_mds
                                 
                                 # item related features:
-                                params['item_rating_cnt'] = len(self.items[test_item]) - 1
+                                item_params={}
+                                item_params['item_rating_cnt'] = len(self.items[test_item]) - 1
                                 item_ratings = [self.items[test_item][user] for user in self.items[test_item] if user != test_user]
-                                params['max_item_rating'] = py.max(item_ratings)
-                                params['min_item_rating'] = py.min(item_ratings)
+                                item_params['max_item_rating'] = py.max(item_ratings)
+                                item_params['min_item_rating'] = py.min(item_ratings)
                                 mode = Counter(item_ratings).most_common(1)[0][0]
-                                params['mode_item_rating'] = mode
-                                params['diff_mode_pred'] = abs(mode - pred)
-                                params['avg_item_rating'] = py.mean(item_ratings)
-                                params['std_item'] = py.std(item_ratings)
+                                item_params['mode_item_rating'] = mode
+                                item_params['diff_mode_pred'] = abs(mode - pred)
+                                item_params['avg_item_rating'] = py.mean(item_ratings)
+                                item_params['std_item'] = py.std(item_ratings)
                                 
                                 # prediction related features:
-                                params['max_weight'] = py.max(ws)
-                                params['min_weight'] = py.min(ws)
-                                params['avg_weight'] = py.mean(ws)
-                                params['std_weight'] = py.std(ws)
+                                pred_params={}
+                                pred_params['max_weight'] = py.max(ws)
+                                pred_params['min_weight'] = py.min(ws)
+                                pred_params['avg_weight'] = py.mean(ws)
+                                pred_params['std_weight'] = py.std(ws)
                                 
-                                params['conf'] = calc_confidence(rates)
-                                params['pred'] = pred
-                                params['sim_cnt'] = sim_cnt
-                                params['std_pred'] = py.std(rates)
-                                params['total_cnt'] = total_cnt
-                                params['trust_cnt'] = trust_cnt
+                                pred_params['conf'] = calc_confidence(rates)
+                                pred_params['pred'] = pred
+                                pred_params['sim_cnt'] = sim_cnt
+                                pred_params['std_pred'] = py.std(rates)
+                                pred_params['total_cnt'] = total_cnt
+                                pred_params['trust_cnt'] = trust_cnt
                                 
-                                # TODO: need to adapt to different data sets
                                 num_pos = 0
                                 num_neg = 0
                                 median = num_scale / 2.0 * min_scale
@@ -3022,15 +3105,25 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                     scale = k * min_scale
                                     scale_cnt = rates.count(scale)
                                     # params[scale] = scale_cnt
-                                    params['r' + str(scale)] = float(scale_cnt) / len(rates)
+                                    pred_params['r' + str(scale)] = float(scale_cnt) / len(rates)
                                     
                                     if scale > median:
                                         num_pos += 1
                                     else:
                                         num_neg += 1
                                 
-                                params['pos_cnt'] = num_pos
-                                params['neg_cnt'] = num_neg
+                                pred_params['pos_cnt'] = num_pos
+                                pred_params['neg_cnt'] = num_neg
+                                
+                                params={}
+                                if self.config['features.users']==on:
+                                    params.update(user_params)
+                                
+                                if self.config['features.items']==on:
+                                    params.update(item_params)
+                                
+                                if self.config['features.preds']==on:
+                                    params.update(pred_params)
                                 
                                 features.append(params)
                                 
@@ -3042,7 +3135,6 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                             f1 = features[0]
                             f2 = features[1]
                             
-                            # basic features
                             for key, val in f1.viewitems():
                                 data.append(val)
                                 data.append(f2[key])
@@ -3052,7 +3144,6 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                             
                             # inverse training instance
                             data = []
-                            # basic features
                             for key, val in f2.viewitems():
                                 data.append(val)
                                 data.append(f1[key])
@@ -3087,123 +3178,41 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                         norm_val = (val - min_val) / (max_val - min_val)
                         vec_features[i] = norm_val    
             
-            # step 3: expending features 
-            if expending_features:
-                print 'number of basic features in use:', len(data)
-                new_data = []
-                for vec_features in train_data:
-                    size = len(vec_features)
-                    row_data = vec_features[:]
-                    for i in range(size):
-                        fa = vec_features[i]
-                        if i + 2 < size:
-                            for j in range(i + 1, size):
-                                fb = vec_features[j]
-                                row_data.append((fa - fb + 1) / 2.0)
-                                row_data.append((fa + fb) / 2.0)
-                    new_data.append(row_data)
-                train_data = new_data
-                
-                print 'number of all features in use:', len(row_data)
-            else:                
-                print 'number of features in use:', len(data)
+            print 'number of features in use:', len(data)
             
             break
         
         '''determine the best gamma'''
         train_targets = py.array(train_targets)
 
-        if reg_type == 'non linear':
-            if not True:
-                
-                # pca = decomposition.PCA(n_components='mle')
-                # new_train = pca.fit_transform(train_data)
-                self.gamma_range = [0.2, 0.4, 0.5]
-                min_mse = py.inf
-                for g in self.gamma_range:
-                    for c in range(1, 6):
-                        c = 0.5 * c;
-                        clf = svm.SVR(kernel='rbf', gamma=g, C=c)
-                        
-                        scores = cross_validation.cross_val_score(clf, train_data, train_targets, score_func=metrics.mean_squared_error, cv=5)
-                        mse = py.mean(scores)
-                        
-                        print 'gamma =', g, ', c =', c , ', mse =', mse
-                        
-                        if min_mse > mse:
-                            min_mse = mse
-                            best_gamma = g
-                            best_c = c
-                            best_clf = clf
-                
-                print '\nBest mse =', min_mse, ', best gamma =', best_gamma, ', best C =', best_c
-                self.results += ',' + str(best_gamma) + ', ' + str(best_c)
-                
-                best_clf.fit(train_data, train_targets)
-            else:
-                # pca = decomposition.PCA(n_components='mle')
-                # new_train = pca.fit_transform(train_data)
+        if True:
             
-                # print 'nuber of used componets =', len(pca.components_[0])
-                best_clf = svm.SVR(kernel='rbf', gamma=0.2, C=1.0)
-                best_clf.fit(train_data, train_targets)
+            # pca = decomposition.PCA(n_components='mle')
+            # new_train = pca.fit_transform(train_data)
+            # self.gamma_range = [0.2, 0.4, 0.5]
+            min_mse = py.inf
+            for g in self.gamma_range:
+                for c in [1.0]:
+                    clf = svm.SVR(kernel='rbf', gamma=g, C=c)
+                    
+                    scores = cross_validation.cross_val_score(clf, train_data, train_targets, score_func=metrics.mean_squared_error, cv=5)
+                    mse = py.mean(scores)
+                    
+                    print 'gamma =', g, ', c =', c , ', mse =', mse
+                    
+                    if min_mse > mse:
+                        min_mse = mse
+                        best_gamma = g
+                        best_c = c
+                        best_clf = clf
+            
+            print '\nBest mse =', min_mse, ', best gamma =', best_gamma, ', best C =', best_c
+            self.results += ',' + str(best_gamma) + ', ' + str(best_c)
+            
+            best_clf.fit(train_data, train_targets)
         else:
-            fs_type = 'univariate'
-        
-            if fs_type == 'univariate':
-                selector = SelectPercentile(f_regression, 10)
-                selector.fit(train_data, train_targets)
-                pvalues = selector.pvalues_
-                sps = -py.log10(pvalues)
-                scores = selector.scores_
-            
-                print 'pvalues:', pvalues
-                print 'sps:', sps
-                print 'scores:', scores
-                
-                logs.info(pvalues)
-                logs.info(scores)
-                
-                regressor = svm.SVR(kernel='linear')
-                regressor.fit(selector.transform(train_data), train_targets)
-            
-            elif fs_type == 'lasso':
-                '''L1 norm regularization'''
-            
-            else:     
-                # to determine a best alpha, we may use LassoCV instead
-                regressor = linear_model.Lasso(alpha=0.1)
-                regressor.fit(train_data, train_targets)
-                print regressor.coef_
-                pca = decomposition.PCA(n_components='mle')
-                new_train = pca.fit_transform(train_data)
-                
-                print 'components =', len(pca.components_[0])
-                print 'variances =', pca.explained_variance_
-                
-                if True:
-                    min_mse = py.inf
-                    for c in range(1, 6):
-                        c = 0.2 * c;
-                        clf = svm.SVR(kernel='linear', C=c)
-                        
-                        scores = cross_validation.cross_val_score(clf, new_train, train_targets, score_func=metrics.mean_squared_error, cv=5)
-                        mse = py.mean(scores)
-                        
-                        print 'c =', c , ', mse =', mse
-                        
-                        if min_mse > mse:
-                            min_mse = mse
-                            best_c = c
-                            best_clf = clf
-                    
-                    print '\nBest mse =', min_mse, ', best C =', best_c
-                    self.results += ', ' + str(best_c)
-                    
-                    best_clf.fit(new_train, train_targets)
-                else:
-                    best_clf = svm.SVR(kernel='linear', C=c)
-                    best_clf.fit(train_data, train_targets)
+            best_clf = svm.SVR(kernel='linear')
+            best_clf.fit(train_data, train_targets)
         
         '''Testing: to predict items' ratings. '''
         errors = []
@@ -3280,12 +3289,11 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                         if len(cluster_ids) > 1:
                             '''compute feature for confidence of prediction'''
                             
-                            params = {}
-                            
                             # user related features:
-                            params['user_rating_cnt'] = len(train[test_user])
-                            params['avg_user_rating'] = py.mean(train[test_user].values())
-                            params['std_user'] = py.std(train[test_user].values())
+                            user_params={}
+                            user_params['user_rating_cnt'] = len(train[test_user])
+                            user_params['avg_user_rating'] = py.mean(train[test_user].values())
+                            user_params['std_user'] = py.std(train[test_user].values())
                             
                             if cluster_id == sim_id:
                                 dist_core = self.rating_dist[test_user][sim_medoid] if sim_medoid in self.rating_dist[test_user] else 1.0
@@ -3301,32 +3309,34 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                 
                                 dist_mds = self.rating_dist[trust_medoid][side_medoid] if trust_medoid in self.rating_dist and side_medoid in self.rating_dist[trust_medoid] else 1.0
                             
-                            params['dist_core'] = dist_core
-                            params['dist_side'] = dist_side
-                            params['dist_mds'] = dist_mds
+                            user_params['dist_core'] = dist_core
+                            user_params['dist_side'] = dist_side
+                            user_params['dist_mds'] = dist_mds
                             
                             # item related features:
-                            params['item_rating_cnt'] = len(self.items[test_item])
+                            item_params={}
+                            item_params['item_rating_cnt'] = len(self.items[test_item])
                             item_ratings = self.items[test_item].values()
-                            params['max_item_rating'] = py.max(item_ratings)
-                            params['min_item_rating'] = py.min(item_ratings)
-                            params['avg_item_rating'] = py.mean(item_ratings)
+                            item_params['max_item_rating'] = py.max(item_ratings)
+                            item_params['min_item_rating'] = py.min(item_ratings)
+                            item_params['avg_item_rating'] = py.mean(item_ratings)
                             mode = Counter(item_ratings).most_common(1)[0][0]
-                            params['mode_item_rating'] = mode
-                            params['diff_mode_pred'] = abs(mode - pred)
-                            params['std_item'] = py.std(item_ratings)
+                            item_params['mode_item_rating'] = mode
+                            item_params['diff_mode_pred'] = abs(mode - pred)
+                            item_params['std_item'] = py.std(item_ratings)
                             
                             # prediction related features:
-                            params['max_weight'] = py.max(ws)
-                            params['min_weight'] = py.min(ws)
-                            params['avg_weight'] = py.mean(ws)
-                            params['std_weight'] = py.std(ws)
-                            params['conf'] = calc_confidence(rates)
-                            params['pred'] = pred
-                            params['sim_cnt'] = sim_cnt
-                            params['std_pred'] = py.std(rates)
-                            params['total_cnt'] = total_cnt
-                            params['trust_cnt'] = trust_cnt
+                            pred_params={}
+                            pred_params['max_weight'] = py.max(ws)
+                            pred_params['min_weight'] = py.min(ws)
+                            pred_params['avg_weight'] = py.mean(ws)
+                            pred_params['std_weight'] = py.std(ws)
+                            pred_params['conf'] = calc_confidence(rates)
+                            pred_params['pred'] = pred
+                            pred_params['sim_cnt'] = sim_cnt
+                            pred_params['std_pred'] = py.std(rates)
+                            pred_params['total_cnt'] = total_cnt
+                            pred_params['trust_cnt'] = trust_cnt
                             
                             num_pos = 0
                             num_neg = 0
@@ -3335,15 +3345,25 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                 scale = k * min_scale
                                 scale_cnt = rates.count(scale)
                                 # params[scale] = scale_cnt
-                                params['r' + str(scale)] = float(scale_cnt) / len(rates)
+                                pred_params['r' + str(scale)] = float(scale_cnt) / len(rates)
                                 
                                 if scale > median:
                                     num_pos += 1
                                 else:
                                     num_neg += 1
                             
-                            params['pos_cnt'] = num_pos
-                            params['neg_cnt'] = num_neg
+                            pred_params['pos_cnt'] = num_pos
+                            pred_params['neg_cnt'] = num_neg
+                            
+                            params={}
+                            if self.config['features.users']==on:
+                                params.update(user_params)
+                            
+                            if self.config['features.items']==on:
+                                params.update(item_params)
+                            
+                            if self.config['features.preds']==on:
+                                params.update(pred_params)
                             
                             features.append(params)
                             
@@ -3371,44 +3391,17 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                 norm_val = (val - min_val) / (max_val - min_val)
                                 data[i] = norm_val
                         
-                        if expending_features:
-                            expend_data = []
-                            size = len(data)
-                            for i in range(size):
-                                fa = data[i]
-                                if i + 2 < size:
-                                    for j in range(i + 1, size):
-                                        fb = data[j]
-                                        expend_data.append((fa - fb + 1) / 2.0)
-                                        expend_data.append((fa + fb) / 2.0)
-                            data.extend(expend_data)
+                        pred = best_clf.predict(data)[0] * 5.0
                         
-                        if fs_type == 'lasso':
-                            pred = regressor.predict(data) * 5.0
-                        elif True:
-                            pred = regressor.predict(selector.transform(data))[0] * 5.0
-                        else:
-                        
-                            if reg_type == 'linear':
-                                new_data = pca.transform(data)
-                                pred = best_clf.predict(new_data)[0] * 5.0
-                                
-                            else:
-                                # new_data = pca.transform(data)
-                                pred = best_clf.predict(data)[0] * 5.0
-                        
-                        # TODO: deal with the values out of range
-                        if pred > 5.0:
-                            pred = 5.0;
-                        elif pred < 0 or pred <= 0.25:
+                        # deal with the values out of range
+                        if pred > max_scale:
+                            pred = max_scale;
+                        elif pred < 0 or pred <= 0.5 * min_scale:
                             print 'prediction', pred, 'is skipped.'
                             continue
-                        elif pred > 0.25 and pred < 0.5:
-                            pred = 0.5
+                        elif pred > 0.5 * min_scale and pred < min_scale:
+                            pred = min_scale
                         
-                        
-                        # check if there are any potential to do so. 
-                        # pred = truth
                     else:
                         pred = preds[0]
                         
