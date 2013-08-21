@@ -11,7 +11,7 @@ from scipy.spatial import distance
 from data import Dataset
 from graph import Graph, Vertex, Edge
 from scipy import integrate, stats
-from sklearn import svm, cross_validation, metrics, linear_model, decomposition
+from sklearn import svm, cross_validation, metrics, linear_model
 from sklearn.linear_model.logistic import LogisticRegression
 from sklearn.ensemble.forest import RandomForestRegressor
 from sklearn.ensemble.gradient_boosting import GradientBoostingRegressor
@@ -245,7 +245,12 @@ class AbstractCF(object):
                     for i in range(1, 6):
                         self.rating_set = 'u' + str(i) + '.base'
                         self.test_set = 'u' + str(i) + '.test'
+                        if self.config['mv.cold.batch'] == on: 
+                            self.mv_alpha = j * 0.1
+                        else:
+                            self.mv_alpha = float(self.config['mv.cold.batch'])
                         self.single_run()
+            
         elif int(self.config['kmeans.init']) > 1:
             for i in range(int(self.config['kmeans.init'])):
                 self.single_run()
@@ -1057,9 +1062,17 @@ class KmedoidsCF(AbstractCF):
         
     def prep_test(self, train, test=None):
         
-        self.train = {user: train[user] for user in train if len(train[user]) >= self.cold_len or (user in self.trust and len(self.trust[user]) >= 5)} 
+        self.train2 = train
+        self.train = {user: train[user] for user in train if len(train[user]) >= self.cold_len or (user in self.trust and len(self.trust[user]) >= self.cold_len)} 
         
-        return {user: test[user] for user in test if user in self.train}
+        if self.dataset_mode == 'cold_users':
+            return {user: test[user] for user in test if user not in self.train2 or len(self.train2[user]) < self.cold_len}
+        
+        elif self.dataset_mode == 'heavy_users':
+            return {user: test[user] for user in test if user in self.train}
+        
+        elif self.dataset_mode == 'all':
+            return test
     
     def trust_distance(self, source, trustee, max_depth=2):
         ''' calculate the distance between trustor and trustee, if trustee not in the WOT of trustor, return -1, using breath first searching 
@@ -1353,7 +1366,23 @@ class KmedoidsCF(AbstractCF):
         
         errors = []
         for test_user in test:
-            if test_user not in train: continue     
+            if self.dataset_mode == 'cold_users': 
+                for test_item in test[test_user]:
+                    preds = []
+                    for c_ms in clusters.viewvalues():
+                        if not c_ms: continue
+                        
+                        rates = [self.train2[m][test_item] for m in c_ms if m != test_user and test_item in self.train2[m]]
+                        if rates:
+                            preds.append(py.average(rates))
+                    
+                    if preds:
+                        pred = py.average(preds)
+                        errors.append(abs(pred - test[test_user][test_item]))
+                
+                continue
+            
+            if test_user not in train: continue
             
             cluster_ms = []
             for c_ms in clusters.viewvalues():
@@ -2978,33 +3007,389 @@ class MultiViewKmedoidsCF(KmedoidsCF):
             self.results += ',' + str(self.n_clusters) + ',' + str(self.max_depth)
         
             '''Training: collect training data for svm classifier'''
-            train_data = []
-            train_targets = []
-            verbose = not True
-            progress = 0
-            for test_user in train:
-                
-                progress += 1
-                if verbose: 
-                    print 'current progress:', progress, '/', len(train)
+            if self.dataset_mode in ['all', 'heavy_users']:
+                train_data = []
+                train_targets = []
+                verbose = not True
+                progress = 0
+                for test_user in train:
                     
+                    progress += 1
+                    if verbose: 
+                        print 'current progress:', progress, '/', len(train)
+                        
+                    cluster_ids = [] 
+                    for c_id, c_ms in clusters.viewitems():
+                        if test_user in c_ms:
+                            cluster_ids.append(c_id)
+                    
+                    if len(cluster_ids) < 2: continue
+                    
+                    for c_id in cluster_ids:
+                        if test_user in sim_clusters[c_id]:
+                            sim_medoid = self.sim_medoids[c_id]
+                            sim_id = c_id
+                        
+                        if test_user in trust_clusters[c_id]:
+                            trust_medoid = self.trust_medoids[c_id]
+                            trust_id = c_id
+                    
+                    for test_item in train[test_user]:
+                        preds = []
+                        features = []
+                        
+                        for cluster_id in cluster_ids:
+                            candidates = [m for m in clusters[cluster_id] if m != test_user and test_item in train[m]]
+                            rates = []
+                            ws = []
+                            
+                            sim_cnt = 0
+                            trust_cnt = 0
+                            total_cnt = 0
+                            for m in candidates:
+                                sim = 1 - self.rating_dist[test_user][m] if test_user in self.rating_dist and m in self.rating_dist[test_user] else py.nan
+                                t = 1 - self.trust_dist[test_user][m] if test_user in self.trust_dist and m in self.trust_dist[test_user] else 0
+                                
+                                if not py.isnan(sim) and 1 + sim > 0:
+        
+                                    if t > 0:
+                                        w = stats.hmean([1 + sim, 1 + t])
+                                    else:
+                                        w = 1 + sim
+                                    # w = stats.hmean([1 + sim, 1 + t])
+                                        
+                                    if w > 0:
+                                        ws.append(w)
+                                        rates.append(train[m][test_item])
+                                        
+                                        if m in sim_clusters[cluster_id]:
+                                            sim_cnt += 1
+                                        
+                                        if m in trust_clusters[cluster_id]:
+                                            trust_cnt += 1
+                                        
+                                        total_cnt += 1
+                                    
+                            if rates:
+                                pred = py.average(rates, weights=ws)
+                                preds.append(pred)
+                                
+                                if len(cluster_ids) == 2:
+                                    
+                                    # user related features:
+                                    user_params = {}
+                                    user_params['user_rating_cnt'] = len(train[test_user]) - 1
+                                    user_ratings = [train[test_user][item] for item in train[test_user] if item != test_item]
+                                    user_params['avg_user_rating'] = py.mean(user_ratings)
+                                    user_params['std_user'] = py.std(user_ratings)
+                                    
+                                    if cluster_id == sim_id:
+                                        dist_core = self.rating_dist[test_user][sim_medoid] if sim_medoid in self.rating_dist[test_user] else 1.0
+                                        
+                                        side_medoid = self.trust_medoids[cluster_id]
+                                        dist_side = self.rating_dist[test_user][side_medoid] if test_user in self.rating_dist and side_medoid in self.rating_dist[test_user] else 1.0
+                                        dist_mds = self.rating_dist[sim_medoid][side_medoid] if sim_medoid in self.rating_dist and side_medoid in self.rating_dist[sim_medoid] else 1.0
+                                    elif cluster_id == trust_id:
+                                        
+                                        dist_core = self.rating_dist[test_user][trust_medoid] if test_user in self.rating_dist and trust_medoid in self.rating_dist[test_user] else 1.0
+                                        
+                                        side_medoid = self.sim_medoids[cluster_id]
+                                        dist_side = self.rating_dist[test_user][side_medoid] if test_user in self.rating_dist and side_medoid in self.rating_dist[test_user] else 1.0
+                                        
+                                        dist_mds = self.rating_dist[trust_medoid][side_medoid] if trust_medoid in self.rating_dist and side_medoid in self.rating_dist[trust_medoid] else 1.0
+                                    
+                                    user_params['dist_core'] = dist_core
+                                    user_params['dist_side'] = dist_side
+                                    user_params['dist_mds'] = dist_mds
+                                    
+                                    # item related features:
+                                    item_params = {}
+                                    item_params['item_rating_cnt'] = len(self.items[test_item]) - 1
+                                    item_ratings = [self.items[test_item][user] for user in self.items[test_item] if user != test_user]
+                                    item_params['max_item_rating'] = py.max(item_ratings)
+                                    item_params['min_item_rating'] = py.min(item_ratings)
+                                    mode = Counter(item_ratings).most_common(1)[0][0]
+                                    item_params['mode_item_rating'] = mode
+                                    item_params['diff_mode_pred'] = abs(mode - pred)
+                                    item_params['avg_item_rating'] = py.mean(item_ratings)
+                                    item_params['std_item'] = py.std(item_ratings)
+                                    
+                                    # prediction related features:
+                                    pred_params = {}
+                                    pred_params['max_weight'] = py.max(ws)
+                                    pred_params['min_weight'] = py.min(ws)
+                                    pred_params['avg_weight'] = py.mean(ws)
+                                    pred_params['std_weight'] = py.std(ws)
+                                    
+                                    pred_params['conf'] = calc_confidence(rates)
+                                    pred_params['pred'] = pred
+                                    pred_params['sim_cnt'] = sim_cnt
+                                    pred_params['std_pred'] = py.std(rates)
+                                    pred_params['total_cnt'] = total_cnt
+                                    pred_params['trust_cnt'] = trust_cnt
+                                    
+                                    num_pos = 0
+                                    num_neg = 0
+                                    median = num_scale / 2.0 * min_scale
+                                    for k in range(1, num_scale):
+                                        scale = k * min_scale
+                                        scale_cnt = rates.count(scale)
+                                        # params[scale] = scale_cnt
+                                        pred_params['r' + str(scale)] = float(scale_cnt) / len(rates)
+                                        
+                                        if scale > median:
+                                            num_pos += 1
+                                        else:
+                                            num_neg += 1
+                                    
+                                    pred_params['pos_cnt'] = num_pos
+                                    pred_params['neg_cnt'] = num_neg
+                                    
+                                    params = {}
+                                    if self.config['features.users'] == on:
+                                        params.update(user_params)
+                                    
+                                    if self.config['features.items'] == on:
+                                        params.update(item_params)
+                                    
+                                    if self.config['features.preds'] == on:
+                                        params.update(pred_params)
+                                    
+                                    features.append(params)
+                                    
+                        if preds:
+                            truth = train[test_user][test_item]
+                            
+                            if len(preds) == 2:
+                                data = []
+                                f1 = features[0]
+                                f2 = features[1]
+                                
+                                for key, val in f1.viewitems():
+                                    data.append(val)
+                                    data.append(f2[key])
+                                
+                                train_data.append(data)
+                                train_targets.append(truth / 5.0)
+                                
+                                # inverse training instance
+                                data = []
+                                for key, val in f2.viewitems():
+                                    data.append(val)
+                                    data.append(f1[key])
+                                
+                                train_data.append(data)
+                                train_targets.append(truth / 5.0)
+                if not train_data: 
+                    print 'no training data, try one more time...'
+                    continue
+                
+                # normalize collected training data
+                max_norms = []
+                min_norms = []
+                
+                for i in range(len(data)):
+                    max_norms.append(-py.inf)
+                    min_norms.append(py.Inf)
+                    
+                for vec_features in train_data:
+                    for i in range(len(vec_features)):
+                        val = vec_features[i]
+                        if max_norms[i] < val: max_norms[i] = val
+                        if min_norms[i] > val: min_norms[i] = val
+                
+                # step 2: normalize the features values to [0, 1]
+                for vec_features in train_data: 
+                    for i in range(len(vec_features)):
+                        val = vec_features[i]
+                        max_val = max_norms[i]
+                        min_val = min_norms[i]
+                        if max_val > min_val:
+                            norm_val = (val - min_val) / (max_val - min_val)
+                            vec_features[i] = norm_val    
+                
+                print 'number of features in use:', len(data)
+                
+                break
+            
+                '''determine the best gamma'''
+                train_targets = py.array(train_targets)
+        
+                if True:
+                    
+                    # pca = decomposition.PCA(n_components='mle')
+                    # new_train = pca.fit_transform(train_data)
+                    # self.gamma_range = [0.2, 0.4, 0.5]
+                    min_mse = py.inf
+                    for g in self.gamma_range:
+                        for c in [1.0]:
+                            clf = svm.SVR(kernel='rbf', gamma=g, C=c)
+                            
+                            scores = cross_validation.cross_val_score(clf, train_data, train_targets, score_func=metrics.mean_squared_error, cv=5)
+                            mse = py.mean(scores)
+                            
+                            print 'gamma =', g, ', c =', c , ', mse =', mse
+                            
+                            if min_mse > mse:
+                                min_mse = mse
+                                best_gamma = g
+                                best_c = c
+                                best_clf = clf
+                    
+                    print '\nBest mse =', min_mse, ', best gamma =', best_gamma, ', best C =', best_c
+                    self.results += ',' + str(best_gamma) + ', ' + str(best_c)
+                    
+                    best_clf.fit(train_data, train_targets)
+                else:
+                    best_clf = svm.SVR(kernel='linear')
+                    best_clf.fit(train_data, train_targets)
+            else:
+                break
+            
+        '''Testing: to predict items' ratings. '''
+        self.results += ',' + str(self.mv_alpha)
+        errors = []
+        for test_user in test:
+            
+            if self.dataset_mode == 'cold_users':
+                
+                method = 1
+                if method == 1:
+                
+                    '''
+                       STEP 1: rating-based anomaly detection; 
+                       STEP 2: trust-based correlation detection.
+                    '''
+                    epsilon = 0.05; alpha = self.mv_alpha
+                    cs = []
+                    ws = []
+                    if test_user in self.train2 or test_user in self.trust:
+                        
+                        uns = {}
+                        if test_user in self.trust and alpha > 0:
+                            for u in self.trust.viewkeys():
+                                t = self.trust_distance(test_user, u, self.max_depth) if (test_user not in self.trust_dist) or (u not in self.trust_dist[test_user]) else self.trust_dist[test_user][u]
+                                if t > 0:
+                                    uns[u] = 1.0 / t
+                        
+                        for c_id, c_ms in clusters.viewitems():
+                            if not c_ms: continue
+                            
+                            w = 0
+                            if test_user in self.train2:
+                                prob = 0.0
+                                cnt = 0
+                                for item in self.train2[test_user]:
+                                    rate = self.train2[test_user][item]
+                                    rates = [self.train2[m][item] for m in c_ms if item in self.train2[m] and m != test_user]
+                                    if rates:
+                                        mu = py.average(rates)
+                                        dev = py.std(rates)
+                                        
+                                        if dev == 0:
+                                            val = 1 if rate == mu else 1.0 / (len(rates) + 1.0)
+                                        else:
+                                            val = math.exp(-(rate - mu) ** 2 / (2 * dev ** 2)) / (math.sqrt(2 * math.pi * dev ** 2))
+                                        
+                                        prob += val
+                                        cnt += 1    
+                                        # print 'count =', cnt, ', val =', float(val), ', prob =', float(prob)
+                                
+                                # print 'Summary: prob =', prob, ', lambda^', cnt, ' =', epsilon ** cnt
+                                if cnt > 0 and prob >= epsilon * cnt:
+                                    w = (prob / cnt) ** 2
+                            
+                            if uns and alpha > 0:
+                                us = []
+                                vs = []
+                                
+                                for u in uns.viewkeys():
+                                    
+                                    ts = [self.trust_dist[m][u] for m in c_ms if m != test_user and m in self.trust_dist and u in self.trust_dist[m]]
+                                    
+                                    if ts:
+                                        us.append(uns[u])
+                                        vs.append(py.average(ts))
+                                
+                                if us:
+                                    sim = 1 - distance.cosine(us, vs)
+                                    w = w + alpha * sim ** 2
+                            
+                            if w > 0:
+                                cs.append(c_id)
+                                ws.append(w)
+                            
+                            
+                    '''STEP 3: predict item ratings'''
+                    if cs:
+                        for test_item in test[test_user]:
+                            preds = 0
+                            weights = 0
+                            for i in range(len(cs)):
+                                c_id = cs[i]
+                                rates = [self.train2[m][test_item] for m in clusters[c_id] if test_item in self.train2[m] and m != test_user]
+                                
+                                if rates:
+                                    pred = py.average(rates)
+                                    
+                                    preds += pred * ws[i]
+                                    weights += ws[i]
+                            
+                            if weights > 0:
+                                error = test[test_user][test_item] - preds / weights
+                                errors.append(abs(error))
+                    elif False: 
+                        for test_item in test[test_user]:
+                            preds = []
+                            for c_ms in clusters.viewvalues():
+                                rates = [self.train2[m][test_item] for m in c_ms if m != test_user and test_item in self.train2[m]]
+                                if rates:
+                                    pred = py.average(rates)
+                                    preds.append(pred)
+                            
+                            if preds:
+                                pred = py.average(preds)
+                                errors.append(abs(pred - test[test_user][test_item]))
+                
+                elif method == 2:
+                    for test_item in test[test_user]:
+                        
+                        preds = []
+                        for c_ms in clusters.viewvalues():
+                            rates = [self.train2[m][test_item] for m in c_ms if test_item in self.train2[m] and m != test_user]
+                            
+                            if rates: 
+                                pred = py.average(rates)
+                                preds.append(pred)
+                        
+                        if preds:
+                            pred = py.average(preds)
+                            errors.append(abs(pred - test[test_user][test_item]))         
+            
+            elif self.dataset_mode == 'heavy_users':
+                if test_user not in train: continue
+                
+                # it is possible that one user occurs in two clusters
                 cluster_ids = [] 
                 for c_id, c_ms in clusters.viewitems():
                     if test_user in c_ms:
                         cluster_ids.append(c_id)
                 
-                if len(cluster_ids) < 2: continue
-                
-                for c_id in cluster_ids:
-                    if test_user in sim_clusters[c_id]:
-                        sim_medoid = self.sim_medoids[c_id]
-                        sim_id = c_id
+                if len(cluster_ids) == 2:
+                    for c_id in cluster_ids:
+                        if test_user in sim_clusters[c_id]:
+                            sim_medoid = self.sim_medoids[c_id]
+                            sim_id = c_id
+                        
+                        if test_user in trust_clusters[c_id]:
+                            trust_medoid = self.trust_medoids[c_id]
+                            trust_id = c_id 
                     
-                    if test_user in trust_clusters[c_id]:
-                        trust_medoid = self.trust_medoids[c_id]
-                        trust_id = c_id
+                if not cluster_ids:
+                    # print 'cannot find the cluster for test user', test_user
+                    continue
                 
-                for test_item in train[test_user]:
+                for test_item in test[test_user]:
                     preds = []
                     features = []
                     
@@ -3041,17 +3426,24 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                     total_cnt += 1
                                 
                         if rates:
+                            # k-NN methods: find top-k most similar users according to their weights
+                            if self.knn > 0:
+                                sorted_ws = sorted(enumerate(ws), reverse=True, key=operator.itemgetter(1))[:self.knn]
+                                indeces = [item[0] for item in sorted_ws]
+                                ws = [ws[index] for index in indeces]
+                                rates = [rates[index] for index in indeces]
+                                
                             pred = py.average(rates, weights=ws)
                             preds.append(pred)
                             
-                            if len(cluster_ids) == 2:
+                            if len(cluster_ids) > 1:
+                                '''compute feature for confidence of prediction'''
                                 
                                 # user related features:
-                                user_params={}
-                                user_params['user_rating_cnt'] = len(train[test_user]) - 1
-                                user_ratings = [train[test_user][item] for item in train[test_user] if item != test_item]
-                                user_params['avg_user_rating'] = py.mean(user_ratings)
-                                user_params['std_user'] = py.std(user_ratings)
+                                user_params = {}
+                                user_params['user_rating_cnt'] = len(train[test_user])
+                                user_params['avg_user_rating'] = py.mean(train[test_user].values())
+                                user_params['std_user'] = py.std(train[test_user].values())
                                 
                                 if cluster_id == sim_id:
                                     dist_core = self.rating_dist[test_user][sim_medoid] if sim_medoid in self.rating_dist[test_user] else 1.0
@@ -3060,7 +3452,6 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                     dist_side = self.rating_dist[test_user][side_medoid] if test_user in self.rating_dist and side_medoid in self.rating_dist[test_user] else 1.0
                                     dist_mds = self.rating_dist[sim_medoid][side_medoid] if sim_medoid in self.rating_dist and side_medoid in self.rating_dist[sim_medoid] else 1.0
                                 elif cluster_id == trust_id:
-                                    
                                     dist_core = self.rating_dist[test_user][trust_medoid] if test_user in self.rating_dist and trust_medoid in self.rating_dist[test_user] else 1.0
                                     
                                     side_medoid = self.sim_medoids[cluster_id]
@@ -3073,24 +3464,23 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                 user_params['dist_mds'] = dist_mds
                                 
                                 # item related features:
-                                item_params={}
-                                item_params['item_rating_cnt'] = len(self.items[test_item]) - 1
-                                item_ratings = [self.items[test_item][user] for user in self.items[test_item] if user != test_user]
+                                item_params = {}
+                                item_params['item_rating_cnt'] = len(self.items[test_item])
+                                item_ratings = self.items[test_item].values()
                                 item_params['max_item_rating'] = py.max(item_ratings)
                                 item_params['min_item_rating'] = py.min(item_ratings)
+                                item_params['avg_item_rating'] = py.mean(item_ratings)
                                 mode = Counter(item_ratings).most_common(1)[0][0]
                                 item_params['mode_item_rating'] = mode
                                 item_params['diff_mode_pred'] = abs(mode - pred)
-                                item_params['avg_item_rating'] = py.mean(item_ratings)
                                 item_params['std_item'] = py.std(item_ratings)
                                 
                                 # prediction related features:
-                                pred_params={}
+                                pred_params = {}
                                 pred_params['max_weight'] = py.max(ws)
                                 pred_params['min_weight'] = py.min(ws)
                                 pred_params['avg_weight'] = py.mean(ws)
                                 pred_params['std_weight'] = py.std(ws)
-                                
                                 pred_params['conf'] = calc_confidence(rates)
                                 pred_params['pred'] = pred
                                 pred_params['sim_cnt'] = sim_cnt
@@ -3115,298 +3505,58 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                 pred_params['pos_cnt'] = num_pos
                                 pred_params['neg_cnt'] = num_neg
                                 
-                                params={}
-                                if self.config['features.users']==on:
+                                params = {}
+                                if self.config['features.users'] == on:
                                     params.update(user_params)
                                 
-                                if self.config['features.items']==on:
+                                if self.config['features.items'] == on:
                                     params.update(item_params)
                                 
-                                if self.config['features.preds']==on:
+                                if self.config['features.preds'] == on:
                                     params.update(pred_params)
                                 
                                 features.append(params)
                                 
                     if preds:
-                        truth = train[test_user][test_item]
+                        truth = test[test_user][test_item]
                         
-                        if len(preds) == 2:
-                            data = []
+                        if len(preds) < 0:
+                            pred = py.mean(preds)
+                        
+                        elif len(preds) > 1:
+                            
                             f1 = features[0]
                             f2 = features[1]
                             
+                            data = []
                             for key, val in f1.viewitems():
                                 data.append(val)
                                 data.append(f2[key])
                             
-                            train_data.append(data)
-                            train_targets.append(truth / 5.0)
+                            for i in range(len(data)):
+                                val = data[i]
+                                max_val = max_norms[i]
+                                min_val = min_norms[i]
+                                if max_val > min_val:
+                                    norm_val = (val - min_val) / (max_val - min_val)
+                                    data[i] = norm_val
                             
-                            # inverse training instance
-                            data = []
-                            for key, val in f2.viewitems():
-                                data.append(val)
-                                data.append(f1[key])
+                            pred = best_clf.predict(data)[0] * 5.0
                             
-                            train_data.append(data)
-                            train_targets.append(truth / 5.0)
-            if not train_data: 
-                print 'no training data, try one more time...'
-                continue
-            
-            # normalize collected training data
-            max_norms = []
-            min_norms = []
-            
-            for i in range(len(data)):
-                max_norms.append(-py.inf)
-                min_norms.append(py.Inf)
-                
-            for vec_features in train_data:
-                for i in range(len(vec_features)):
-                    val = vec_features[i]
-                    if max_norms[i] < val: max_norms[i] = val
-                    if min_norms[i] > val: min_norms[i] = val
-            
-            # step 2: normalize the features values to [0, 1]
-            for vec_features in train_data: 
-                for i in range(len(vec_features)):
-                    val = vec_features[i]
-                    max_val = max_norms[i]
-                    min_val = min_norms[i]
-                    if max_val > min_val:
-                        norm_val = (val - min_val) / (max_val - min_val)
-                        vec_features[i] = norm_val    
-            
-            print 'number of features in use:', len(data)
-            
-            break
-        
-        '''determine the best gamma'''
-        train_targets = py.array(train_targets)
-
-        if True:
-            
-            # pca = decomposition.PCA(n_components='mle')
-            # new_train = pca.fit_transform(train_data)
-            # self.gamma_range = [0.2, 0.4, 0.5]
-            min_mse = py.inf
-            for g in self.gamma_range:
-                for c in [1.0]:
-                    clf = svm.SVR(kernel='rbf', gamma=g, C=c)
-                    
-                    scores = cross_validation.cross_val_score(clf, train_data, train_targets, score_func=metrics.mean_squared_error, cv=5)
-                    mse = py.mean(scores)
-                    
-                    print 'gamma =', g, ', c =', c , ', mse =', mse
-                    
-                    if min_mse > mse:
-                        min_mse = mse
-                        best_gamma = g
-                        best_c = c
-                        best_clf = clf
-            
-            print '\nBest mse =', min_mse, ', best gamma =', best_gamma, ', best C =', best_c
-            self.results += ',' + str(best_gamma) + ', ' + str(best_c)
-            
-            best_clf.fit(train_data, train_targets)
-        else:
-            best_clf = svm.SVR(kernel='linear')
-            best_clf.fit(train_data, train_targets)
-        
-        '''Testing: to predict items' ratings. '''
-        errors = []
-        for test_user in test:
-            if test_user not in train: continue
-            
-            # it is possible that one user occurs in two clusters
-            cluster_ids = [] 
-            for c_id, c_ms in clusters.viewitems():
-                if test_user in c_ms:
-                    cluster_ids.append(c_id)
-            
-            if len(cluster_ids) == 2:
-                for c_id in cluster_ids:
-                    if test_user in sim_clusters[c_id]:
-                        sim_medoid = self.sim_medoids[c_id]
-                        sim_id = c_id
-                    
-                    if test_user in trust_clusters[c_id]:
-                        trust_medoid = self.trust_medoids[c_id]
-                        trust_id = c_id 
-                
-            if not cluster_ids:
-                # print 'cannot find the cluster for test user', test_user
-                continue
-            
-            for test_item in test[test_user]:
-                preds = []
-                features = []
-                
-                for cluster_id in cluster_ids:
-                    candidates = [m for m in clusters[cluster_id] if m != test_user and test_item in train[m]]
-                    rates = []
-                    ws = []
-                    
-                    sim_cnt = 0
-                    trust_cnt = 0
-                    total_cnt = 0
-                    for m in candidates:
-                        sim = 1 - self.rating_dist[test_user][m] if test_user in self.rating_dist and m in self.rating_dist[test_user] else py.nan
-                        t = 1 - self.trust_dist[test_user][m] if test_user in self.trust_dist and m in self.trust_dist[test_user] else 0
-                        
-                        if not py.isnan(sim) and 1 + sim > 0:
-
-                            if t > 0:
-                                w = stats.hmean([1 + sim, 1 + t])
-                            else:
-                                w = 1 + sim
-                            # w = stats.hmean([1 + sim, 1 + t])
-                                
-                            if w > 0:
-                                ws.append(w)
-                                rates.append(train[m][test_item])
-                                
-                                if m in sim_clusters[cluster_id]:
-                                    sim_cnt += 1
-                                
-                                if m in trust_clusters[cluster_id]:
-                                    trust_cnt += 1
-                                
-                                total_cnt += 1
+                            # deal with the values out of range
+                            if pred > max_scale:
+                                pred = max_scale;
+                            elif pred < 0 or pred <= 0.5 * min_scale:
+                                print 'prediction', pred, 'is skipped.'
+                                continue
+                            elif pred > 0.5 * min_scale and pred < min_scale:
+                                pred = min_scale
                             
-                    if rates:
-                        # k-NN methods: find top-k most similar users according to their weights
-                        if self.knn > 0:
-                            sorted_ws = sorted(enumerate(ws), reverse=True, key=operator.itemgetter(1))[:self.knn]
-                            indeces = [item[0] for item in sorted_ws]
-                            ws = [ws[index] for index in indeces]
-                            rates = [rates[index] for index in indeces]
+                        else:
+                            pred = preds[0]
                             
-                        pred = py.average(rates, weights=ws)
-                        preds.append(pred)
-                        
-                        if len(cluster_ids) > 1:
-                            '''compute feature for confidence of prediction'''
-                            
-                            # user related features:
-                            user_params={}
-                            user_params['user_rating_cnt'] = len(train[test_user])
-                            user_params['avg_user_rating'] = py.mean(train[test_user].values())
-                            user_params['std_user'] = py.std(train[test_user].values())
-                            
-                            if cluster_id == sim_id:
-                                dist_core = self.rating_dist[test_user][sim_medoid] if sim_medoid in self.rating_dist[test_user] else 1.0
-                                
-                                side_medoid = self.trust_medoids[cluster_id]
-                                dist_side = self.rating_dist[test_user][side_medoid] if test_user in self.rating_dist and side_medoid in self.rating_dist[test_user] else 1.0
-                                dist_mds = self.rating_dist[sim_medoid][side_medoid] if sim_medoid in self.rating_dist and side_medoid in self.rating_dist[sim_medoid] else 1.0
-                            elif cluster_id == trust_id:
-                                dist_core = self.rating_dist[test_user][trust_medoid] if test_user in self.rating_dist and trust_medoid in self.rating_dist[test_user] else 1.0
-                                
-                                side_medoid = self.sim_medoids[cluster_id]
-                                dist_side = self.rating_dist[test_user][side_medoid] if test_user in self.rating_dist and side_medoid in self.rating_dist[test_user] else 1.0
-                                
-                                dist_mds = self.rating_dist[trust_medoid][side_medoid] if trust_medoid in self.rating_dist and side_medoid in self.rating_dist[trust_medoid] else 1.0
-                            
-                            user_params['dist_core'] = dist_core
-                            user_params['dist_side'] = dist_side
-                            user_params['dist_mds'] = dist_mds
-                            
-                            # item related features:
-                            item_params={}
-                            item_params['item_rating_cnt'] = len(self.items[test_item])
-                            item_ratings = self.items[test_item].values()
-                            item_params['max_item_rating'] = py.max(item_ratings)
-                            item_params['min_item_rating'] = py.min(item_ratings)
-                            item_params['avg_item_rating'] = py.mean(item_ratings)
-                            mode = Counter(item_ratings).most_common(1)[0][0]
-                            item_params['mode_item_rating'] = mode
-                            item_params['diff_mode_pred'] = abs(mode - pred)
-                            item_params['std_item'] = py.std(item_ratings)
-                            
-                            # prediction related features:
-                            pred_params={}
-                            pred_params['max_weight'] = py.max(ws)
-                            pred_params['min_weight'] = py.min(ws)
-                            pred_params['avg_weight'] = py.mean(ws)
-                            pred_params['std_weight'] = py.std(ws)
-                            pred_params['conf'] = calc_confidence(rates)
-                            pred_params['pred'] = pred
-                            pred_params['sim_cnt'] = sim_cnt
-                            pred_params['std_pred'] = py.std(rates)
-                            pred_params['total_cnt'] = total_cnt
-                            pred_params['trust_cnt'] = trust_cnt
-                            
-                            num_pos = 0
-                            num_neg = 0
-                            median = num_scale / 2.0 * min_scale
-                            for k in range(1, num_scale):
-                                scale = k * min_scale
-                                scale_cnt = rates.count(scale)
-                                # params[scale] = scale_cnt
-                                pred_params['r' + str(scale)] = float(scale_cnt) / len(rates)
-                                
-                                if scale > median:
-                                    num_pos += 1
-                                else:
-                                    num_neg += 1
-                            
-                            pred_params['pos_cnt'] = num_pos
-                            pred_params['neg_cnt'] = num_neg
-                            
-                            params={}
-                            if self.config['features.users']==on:
-                                params.update(user_params)
-                            
-                            if self.config['features.items']==on:
-                                params.update(item_params)
-                            
-                            if self.config['features.preds']==on:
-                                params.update(pred_params)
-                            
-                            features.append(params)
-                            
-                if preds:
-                    truth = test[test_user][test_item]
-                    
-                    if len(preds) < 0:
-                        pred = py.mean(preds)
-                    
-                    elif len(preds) > 1:
-                        
-                        f1 = features[0]
-                        f2 = features[1]
-                        
-                        data = []
-                        for key, val in f1.viewitems():
-                            data.append(val)
-                            data.append(f2[key])
-                        
-                        for i in range(len(data)):
-                            val = data[i]
-                            max_val = max_norms[i]
-                            min_val = min_norms[i]
-                            if max_val > min_val:
-                                norm_val = (val - min_val) / (max_val - min_val)
-                                data[i] = norm_val
-                        
-                        pred = best_clf.predict(data)[0] * 5.0
-                        
-                        # deal with the values out of range
-                        if pred > max_scale:
-                            pred = max_scale;
-                        elif pred < 0 or pred <= 0.5 * min_scale:
-                            print 'prediction', pred, 'is skipped.'
-                            continue
-                        elif pred > 0.5 * min_scale and pred < min_scale:
-                            pred = min_scale
-                        
-                    else:
-                        pred = preds[0]
-                        
-                    error = abs(pred - truth)
-                    errors.append(error)
+                        error = abs(pred - truth)
+                        errors.append(error)
                     
         self.errors = errors
         
