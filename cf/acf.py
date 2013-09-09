@@ -229,7 +229,7 @@ class AbstractCF(object):
     def multiple_run(self):
         if self.config['cross.validation.batch'] == on:
             if self.config['kmeans.clusters'] == 'batch':
-                num_base = 10 if self.dataset == 'FilmTrust' else 50
+                num_base = 50 if self.dataset == 'Flixster' else 10
                 n_clusters = [num_base * (i + 1) for i in range(10)]
             else:
                 n_clusters = [int(self.config['kmeans.clusters'])]
@@ -245,10 +245,6 @@ class AbstractCF(object):
                     for i in range(1, 6):
                         self.rating_set = 'u' + str(i) + '.base'
                         self.test_set = 'u' + str(i) + '.test'
-                        if self.config['mv.cold.batch'] == on: 
-                            self.mv_alpha = j * 0.1
-                        else:
-                            self.mv_alpha = float(self.config['mv.cold.batch'])
                         self.single_run()
             
         elif int(self.config['kmeans.init']) > 1:
@@ -3247,7 +3243,8 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                 break
             
         '''Testing: to predict items' ratings. '''
-        self.results += ',' + str(self.mv_alpha)
+        alpha = float(self.config['mv.cold.alpha'])
+        self.results += ',' + str(alpha)
         errors = []
         for test_user in test:
             
@@ -3260,7 +3257,8 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                        STEP 1: rating-based anomaly detection; 
                        STEP 2: trust-based correlation detection.
                     '''
-                    epsilon = 0.05; alpha = self.mv_alpha
+                    epsilon = 0.05
+                    
                     cs = []
                     ws = []
                     if test_user in self.train2 or test_user in self.trust:
