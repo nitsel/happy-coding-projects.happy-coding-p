@@ -2998,12 +2998,18 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         min_scale = float(self.config['ratings.min_scale'])
         max_scale = float(self.config['ratings.max_scale'])
         
-        while True:
+        
+        if self.dataset_mode=='cold_users':
             clusters, sim_clusters, trust_clusters = self.Multiview_Kmedoids(train, self.n_clusters)
             self.results += ',' + str(self.n_clusters) + ',' + str(self.max_depth)
+            
+        elif self.dataset_mode in ['all', 'heavy_users']:
+            
+            while True:
+                clusters, sim_clusters, trust_clusters = self.Multiview_Kmedoids(train, self.n_clusters)
+                self.results += ',' + str(self.n_clusters) + ',' + str(self.max_depth)
         
-            '''Training: collect training data for svm classifier'''
-            if self.dataset_mode in ['all', 'heavy_users']:
+                '''Training: collect training data for svm classifier'''
                 train_data = []
                 train_targets = []
                 verbose = not True
@@ -3208,43 +3214,44 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                 
                 break
             
-                '''determine the best gamma'''
-                train_targets = py.array(train_targets)
-        
-                if True:
-                    
-                    # pca = decomposition.PCA(n_components='mle')
-                    # new_train = pca.fit_transform(train_data)
-                    # self.gamma_range = [0.2, 0.4, 0.5]
-                    min_mse = py.inf
-                    for g in self.gamma_range:
-                        for c in [1.0]:
-                            clf = svm.SVR(kernel='rbf', gamma=g, C=c)
-                            
-                            scores = cross_validation.cross_val_score(clf, train_data, train_targets, score_func=metrics.mean_squared_error, cv=5)
-                            mse = py.mean(scores)
-                            
-                            print 'gamma =', g, ', c =', c , ', mse =', mse
-                            
-                            if min_mse > mse:
-                                min_mse = mse
-                                best_gamma = g
-                                best_c = c
-                                best_clf = clf
-                    
-                    print '\nBest mse =', min_mse, ', best gamma =', best_gamma, ', best C =', best_c
-                    self.results += ',' + str(best_gamma) + ', ' + str(best_c)
-                    
-                    best_clf.fit(train_data, train_targets)
-                else:
-                    best_clf = svm.SVR(kernel='linear')
-                    best_clf.fit(train_data, train_targets)
+            '''determine the best gamma'''
+            train_targets = py.array(train_targets)
+    
+            if True:
+                
+                # pca = decomposition.PCA(n_components='mle')
+                # new_train = pca.fit_transform(train_data)
+                # self.gamma_range = [0.2, 0.4, 0.5]
+                min_mse = py.inf
+                for g in self.gamma_range:
+                    for c in [1.0]:
+                        clf = svm.SVR(kernel='rbf', gamma=g, C=c)
+                        
+                        scores = cross_validation.cross_val_score(clf, train_data, train_targets, score_func=metrics.mean_squared_error, cv=5)
+                        mse = py.mean(scores)
+                        
+                        print 'gamma =', g, ', c =', c , ', mse =', mse
+                        
+                        if min_mse > mse:
+                            min_mse = mse
+                            best_gamma = g
+                            best_c = c
+                            best_clf = clf
+                
+                print '\nBest mse =', min_mse, ', best gamma =', best_gamma, ', best C =', best_c
+                self.results += ',' + str(best_gamma) + ', ' + str(best_c)
+                
+                best_clf.fit(train_data, train_targets)
             else:
-                break
+                best_clf = svm.SVR(kernel='linear')
+                best_clf.fit(train_data, train_targets)
             
         '''Testing: to predict items' ratings. '''
-        alpha = float(self.config['mv.cold.alpha'])
-        self.results += ',' + str(alpha)
+                
+        if self.dataset_mode == 'cold_users':
+            alpha = float(self.config['mv.cold.alpha'])
+            self.results += ',' + str(alpha)
+            
         errors = []
         for test_user in test:
             
