@@ -3250,7 +3250,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
             
             if self.dataset_mode == 'cold_users':
                 
-                method = 1
+                method = 2
                 if method == 1:
                 
                     '''
@@ -3290,7 +3290,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                             val = math.exp(-(rate - mu) ** 2 / (2 * dev ** 2)) / (math.sqrt(2 * math.pi * dev ** 2))
                                         
                                         prob += val
-                                        cnt += 1    
+                                        cnt += 1
                                         # print 'count =', cnt, ', val =', float(val), ', prob =', float(prob)
                                 
                                 # print 'Summary: prob =', prob, ', lambda^', cnt, ' =', epsilon ** cnt
