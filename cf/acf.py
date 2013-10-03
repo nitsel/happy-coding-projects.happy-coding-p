@@ -6,11 +6,13 @@ Created on Feb 15, 2013
 import math, os, pickle, sys, shutil, socket, datetime, copy
 import numpy as py
 import logging as logs
-import operator, random, emailer
+import scipy.stats as stats
+import operator, random, emailer 
+from scipy import integrate
 from scipy.spatial import distance
 from data import Dataset
 from graph import Graph, Vertex, Edge
-from scipy import integrate, stats
+
 from sklearn import svm, cross_validation, metrics, linear_model
 from sklearn.linear_model.logistic import LogisticRegression
 from sklearn.ensemble.forest import RandomForestRegressor
@@ -3239,7 +3241,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                             best_clf = clf
                 
                 print '\nBest mse =', min_mse, ', best gamma =', best_gamma, ', best C =', best_c
-                self.results += ',' + str(best_gamma) + ', ' + str(best_c)
+                self.results += ',' + str(best_gamma) + ',' + str(best_c)
                 
                 best_clf.fit(train_data, train_targets)
             else:
