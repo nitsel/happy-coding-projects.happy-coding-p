@@ -2996,16 +2996,28 @@ class MultiViewKmedoidsCF(KmedoidsCF):
         self.errors = errors
         
     def cross_over_w_svr_more_features(self, train, test):
+        
+        '''
+        count=0
+        for user in test:
+            if user in self.trust:
+                count+=1
+        
+        print 'number of users having trust=', count, ' out of', len(test)
+        '''
+        
         num_scale = int(self.config['ratings.num_scale']) + 1
         min_scale = float(self.config['ratings.min_scale'])
         max_scale = float(self.config['ratings.max_scale'])
         
-        
-        if self.dataset_mode=='cold_users':
+        '''if self.dataset_mode == 'cold_users':
             clusters, sim_clusters, trust_clusters = self.Multiview_Kmedoids(train, self.n_clusters)
             self.results += ',' + str(self.n_clusters) + ',' + str(self.max_depth)
-            
-        elif self.dataset_mode in ['all', 'heavy_users']:
+        '''
+        if self.dataset_mode in ['all', 'heavy_users', 'cold_users']:
+            '''Average prediction used'''
+            use_avg_pred = not True
+            cold_by_mv = not True
             
             while True:
                 clusters, sim_clusters, trust_clusters = self.Multiview_Kmedoids(train, self.n_clusters)
@@ -3184,9 +3196,13 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                 
                                 train_data.append(data)
                                 train_targets.append(truth / 5.0)
+                                
                 if not train_data: 
                     print 'no training data, try one more time...'
                     continue
+                
+                if use_avg_pred or (self.dataset_mode == 'cold_users' and not cold_by_mv):
+                    break
                 
                 # normalize collected training data
                 max_norms = []
@@ -3219,7 +3235,9 @@ class MultiViewKmedoidsCF(KmedoidsCF):
             '''determine the best gamma'''
             train_targets = py.array(train_targets)
     
-            if True:
+            if use_avg_pred or (self.dataset_mode == 'cold_users'  and not cold_by_mv):
+                pass
+            elif True:
                 
                 # pca = decomposition.PCA(n_components='mle')
                 # new_train = pca.fit_transform(train_data)
@@ -3250,23 +3268,22 @@ class MultiViewKmedoidsCF(KmedoidsCF):
             
         '''Testing: to predict items' ratings. '''
                 
-        if self.dataset_mode == 'cold_users':
+        if self.dataset_mode == 'cold_users' and not cold_by_mv:
             alpha = float(self.config['mv.cold.alpha'])
             self.results += ',' + str(alpha)
             
         errors = []
         for test_user in test:
             
-            if self.dataset_mode == 'cold_users':
+            if self.dataset_mode == 'cold_users' and not cold_by_mv:
                 
-                method = 2
-                if method == 1:
+                if not use_avg_pred:
                 
                     '''
                        STEP 1: rating-based anomaly detection; 
                        STEP 2: trust-based correlation detection.
                     '''
-                    epsilon = 0.05
+                    epsilon = 0.05  # try to decrease this value
                     
                     cs = []
                     ws = []
@@ -3275,9 +3292,17 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                         uns = {}
                         if test_user in self.trust and alpha > 0:
                             for u in self.trust.viewkeys():
-                                t = self.trust_distance(test_user, u, self.max_depth) if (test_user not in self.trust_dist) or (u not in self.trust_dist[test_user]) else self.trust_dist[test_user][u]
-                                if t > 0:
-                                    uns[u] = 1.0 / t
+                                if (test_user not in self.trust_dist) or (u not in self.trust_dist[test_user]):
+                                    t = self.trust_distance(test_user, u, self.max_depth)
+                                    if t > 0:
+                                        uns[u] = 1.0 / t
+                                else:
+                                    t = 1 - self.trust_dist[test_user][u]
+                                    if t > 0:
+                                        uns[u] = t
+                                # t = self.trust_distance(test_user, u, self.max_depth) if (test_user not in self.trust_dist) or (u not in self.trust_dist[test_user]) else self.trust_dist[test_user][u]
+                                # if t > 0:
+                                #    uns[u] = 1.0 / t
                         
                         for c_id, c_ms in clusters.viewitems():
                             if not c_ms: continue
@@ -3304,7 +3329,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                 
                                 # print 'Summary: prob =', prob, ', lambda^', cnt, ' =', epsilon ** cnt
                                 if cnt > 0 and prob >= epsilon * cnt:
-                                    w = (prob / cnt) ** 2
+                                    w = alpha * (prob / cnt) ** 2
                             
                             if uns and alpha > 0:
                                 us = []
@@ -3312,7 +3337,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                 
                                 for u in uns.viewkeys():
                                     
-                                    ts = [self.trust_dist[m][u] for m in c_ms if m != test_user and m in self.trust_dist and u in self.trust_dist[m]]
+                                    ts = [1 - self.trust_dist[m][u] for m in c_ms if m != test_user and m in self.trust_dist and u in self.trust_dist[m]]
                                     
                                     if ts:
                                         us.append(uns[u])
@@ -3320,7 +3345,8 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                 
                                 if us:
                                     sim = 1 - distance.cosine(us, vs)
-                                    w = w + alpha * sim ** 2
+                                    if not py.isnan(sim):
+                                        w = w + (1 - alpha) * sim ** 2
                             
                             if w > 0:
                                 cs.append(c_id)
@@ -3358,7 +3384,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                                 pred = py.average(preds)
                                 errors.append(abs(pred - test[test_user][test_item]))
                 
-                elif method == 2:
+                elif use_avg_pred:
                     for test_item in test[test_user]:
                         
                         preds = []
@@ -3373,7 +3399,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                             pred = py.average(preds)
                             errors.append(abs(pred - test[test_user][test_item]))         
             
-            elif self.dataset_mode == 'heavy_users':
+            elif self.dataset_mode == 'heavy_users' or cold_by_mv:
                 if test_user not in train: continue
                 
                 # it is possible that one user occurs in two clusters
@@ -3443,7 +3469,10 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                             pred = py.average(rates, weights=ws)
                             preds.append(pred)
                             
-                            if len(cluster_ids) > 1:
+                            if use_avg_pred: 
+                                pass
+                            
+                            elif len(cluster_ids) > 1:
                                 '''compute feature for confidence of prediction'''
                                 
                                 # user related features:
@@ -3527,7 +3556,7 @@ class MultiViewKmedoidsCF(KmedoidsCF):
                     if preds:
                         truth = test[test_user][test_item]
                         
-                        if len(preds) < 0:
+                        if use_avg_pred or len(preds) < 0:
                             pred = py.mean(preds)
                         
                         elif len(preds) > 1:
