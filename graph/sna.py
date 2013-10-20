@@ -2,7 +2,8 @@ import networkx as nx
 import operator
 import powerlaw
 
-def read_graph(path):
+def week3():
+    path = "D:\Dropbox\PhD\My Work\Algorithms\@Machine Learning\Lectures\Social Network Analysis\Week 3_Centrality\wikipedia.gml"
     wiki = nx.read_gml(path)
     
     # powerlaw
@@ -37,7 +38,25 @@ def read_graph(path):
     bws = nx.betweenness_centrality(wiki)
     bid, bval = max(bws.iteritems(), Key=operator.itemgetter(1))
     print 'id =', bid, ', highest betweenness =', bval, wiki.node[bid]
+
+def week4():
+    path = "D:\Dropbox\PhD\My Work\Algorithms\@Machine Learning\Lectures\Social Network Analysis\Week 4_Community Structure\wikipedia.gml"
+    wiki = nx.read_gml(path)
+    wiki = wiki.to_undirected()
     
+    # cliques
+    cid, cls = max(nx.node_clique_number(wiki).iteritems(), key=operator.itemgetter(1))
+    print 'clique', cid, ' size:', cls
+    
+    # k-cores
+    kcs = nx.k_core(wiki)
+    print 'k-core size:', len(kcs.node)
+    
+    # community 
+    cs = list(nx.k_clique_communities(wiki, 2))
+    ratio = (len(cs[0]) + 0.0) / len(wiki.node)
+    print 'community ratio:', ratio
+       
 if __name__ == '__main__':
-    path = "D:\Dropbox\PhD\My Work\Algorithms\@Machine Learning\Lectures\Social Network Analysis\Week 3_Centrality\wikipedia.gml"
-    read_graph(path)
+    # week3()
+    week4()
